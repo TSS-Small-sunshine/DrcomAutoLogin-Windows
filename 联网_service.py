@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-联网_service.py — 星尘闪连 (Stardust Flash Link) — Dr.COM 校园网自动登录（Web UI 配置版 v1.4.0）
+联网_service.py — 星尘闪连 (Stardust Flash Link) — Dr.COM 校园网自动登录（Web UI 配置版 v2.0.0）
 
 架构
     主线程：阻塞在 ThreadingHTTPServer 上，提供 Web UI 与 REST API。
@@ -48,7 +48,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 # ============================================================
 # 常量
 # ============================================================
-VERSION = "1.4.0"
+VERSION = "2.0.0"
 BACKOFF_LEVELS = [5, 10, 20, 40, 60]  # 分钟，索引 = 连续失败次数，封顶 60
 
 DEFAULT_CONFIG = {
@@ -1579,6 +1579,29 @@ def api_get_about():
     }
 
 
+def api_get_changelog():
+    """GET /api/changelog — 返回仓库根目录 CHANGELOG.md 内容（UTF-8 文本）。
+
+    路径说明：CHANGELOG.md 与 联网_service.py 同在仓库根目录（即 BASE_DIR）。
+    安装场景下 Inno Setup 把 CHANGELOG.md 复制到 {app}（与 联网_service.py 同级），
+    所以生产环境也是 BASE_DIR/CHANGELOG.md，与开发环境一致。
+    """
+    # CHANGELOG.md 路径（与 BASE_DIR 同级）
+    cl_path = os.path.join(BASE_DIR, "CHANGELOG.md")
+    cl_path = os.path.normpath(cl_path)
+    try:
+        with open(cl_path, "r", encoding="utf-8") as f:
+            content = f.read()
+    except OSError as exc:
+        # 缺失 / 权限 / 编码等任何 OS 级错误都走这里，统一返回 500
+        return 500, {"error": "read changelog failed: {}".format(exc), "content": ""}
+    return 200, {
+        "content": content,
+        "size": len(content),
+        "version": VERSION,
+    }
+
+
 def api_post_restart(handler):
     """返回响应后用 os._exit(0) 退出，由 NSSM 重启。"""
     def _delayed_exit():
@@ -1837,6 +1860,11 @@ class _Handler(BaseHTTPRequestHandler):
                 return
             if path == "/api/about":
                 _send_json(self, 200, api_get_about())
+                return
+            # —— 更新日志（v2.0.0 新增）——
+            if path == "/api/changelog":
+                status, body = api_get_changelog()
+                _send_json(self, status, body)
                 return
             if path == "/api/health":
                 _send_json(self, 200, {"ok": True, "version": VERSION})
@@ -2840,6 +2868,8 @@ code.path {
         <button class="btn btn-danger" id="btn-uninstall" type="button">🗑 卸载服务</button>
         <!-- v1.3 新增：升级历史按钮 -->
         <button class="btn btn-secondary" id="btn-update-history" type="button">📜 查看升级历史</button>
+        <!-- v2.0.0 新增：查看更新日志按钮 -->
+        <button class="btn btn-secondary" id="btn-changelog" type="button">📜 查看更新日志</button>
       </div>
       <p class="hint" id="admin-hint" style="margin-top:14px;"></p>
     </div>
@@ -2862,6 +2892,18 @@ code.path {
       <button class="btn btn-secondary" id="update-history-refresh" type="button">🔄 刷新</button>
       <button class="btn" id="update-history-close-btn" type="button">关闭</button>
     </div>
+  </div>
+</div>
+
+<!-- v2.0.0 新增：更新日志弹窗（默认隐藏，由 JS 控制） -->
+<div class="changelog-modal" id="changelog-modal" hidden role="dialog" aria-modal="true" aria-labelledby="changelog-title">
+  <div class="changelog-backdrop" id="changelog-backdrop"></div>
+  <div class="changelog-dialog" role="document">
+    <div class="changelog-header">
+      <h2 class="changelog-title" id="changelog-title">📜 更新日志</h2>
+      <button class="changelog-close" id="changelog-close" type="button" aria-label="关闭">✕</button>
+    </div>
+    <pre class="changelog-body" id="changelog-body">加载中...</pre>
   </div>
 </div>
 
@@ -2893,6 +2935,17 @@ code.path {
   font-size: 12.5px; line-height: 1.65; white-space: pre-wrap; word-break: break-all;
   margin: 0;
 }
+
+/* 更新日志弹窗（v2.0.0 新增） */
+.changelog-modal { position: fixed; inset: 0; z-index: 9999; display: flex; align-items: center; justify-content: center; }
+.changelog-modal[hidden] { display: none; }
+.changelog-backdrop { position: absolute; inset: 0; background: rgba(0,0,0,0.6); backdrop-filter: blur(4px); }
+.changelog-dialog { position: relative; max-width: 800px; max-height: 80vh; width: 90%; background: var(--surface, #fff); border-radius: 12px; display: flex; flex-direction: column; box-shadow: 0 8px 32px rgba(0,0,0,0.2); overflow: hidden; }
+.changelog-header { display: flex; align-items: center; justify-content: space-between; padding: 16px 20px; border-bottom: 1px solid var(--border, #e2e8f0); }
+.changelog-title { font-size: 16px; font-weight: 700; margin: 0; color: var(--text-strong, #1a1a2e); }
+.changelog-close { background: transparent; border: 0; font-size: 18px; cursor: pointer; color: var(--text-muted, #64748b); padding: 4px 8px; border-radius: 6px; }
+.changelog-close:hover { background: var(--surface-2, #f5f7fb); color: var(--text-strong, #1a1a2e); }
+.changelog-body { flex: 1; overflow: auto; padding: 20px; font-family: ui-monospace, "Cascadia Code", "Fira Code", Menlo, monospace; font-size: 12.5px; line-height: 1.6; white-space: pre-wrap; color: var(--text, #1a1a2e); margin: 0; background: var(--surface, #fff); }
 </style>
 
 <script>
@@ -3630,6 +3683,8 @@ code.path {
       desc.textContent = data.progress_message || ('升级成功（' + fmtTimeOnly(data.last_check_at) + '）');
       action.hidden = false;
       action.textContent = '知道了';
+      // v2.0.0 新增：在 action 按钮旁加一个"📋 查看更新日志"快捷链接
+      ensureChangelogShortcut(banner, action);
       // 7 秒后自动隐藏（也由 5 分钟服务端清理兜底）
       updateSuccessHideAt = Date.now() + 7000;
     } else if (state === 'error') {
@@ -3682,6 +3737,9 @@ code.path {
     // 升级历史按钮（关于面板）
     var btnHistory = $('btn-update-history');
     if (btnHistory) btnHistory.addEventListener('click', openUpdateHistoryModal);
+    // 更新日志按钮（关于面板，v2.0.0 新增）
+    var btnCl = $('btn-changelog');
+    if (btnCl) btnCl.addEventListener('click', openChangelogModal);
     // 弹窗关闭
     var modalClose = $('update-history-close');
     var modalCloseBtn = $('update-history-close-btn');
@@ -3702,8 +3760,15 @@ code.path {
       if (ev.key === 'Escape') {
         var m = $('update-history-modal');
         if (m && !m.hidden) m.hidden = true;
+        var cm = $('changelog-modal');
+        if (cm && !cm.hidden) cm.hidden = true;
       }
     });
+    // 更新日志弹窗关闭按钮（v2.0.0 新增）
+    var clClose = $('changelog-close');
+    var clBackdrop = $('changelog-backdrop');
+    if (clClose) clClose.addEventListener('click', closeChangelogModal);
+    if (clBackdrop) clBackdrop.addEventListener('click', closeChangelogModal);
   }
 
   function loadUpdateHistoryLines() {
@@ -3732,6 +3797,48 @@ code.path {
     var m = $('update-history-modal'); if (!m) return;
     m.hidden = false;
     loadUpdateHistoryLines();
+  }
+
+  // —— 更新日志（v2.0.0 新增）——
+  function openChangelogModal() {
+    var modal = $('changelog-modal');
+    var body = $('changelog-body');
+    if (!modal || !body) return;
+    body.textContent = '加载中...';
+    modal.hidden = false;
+    fetch('/api/changelog').then(function (r) { return r.json(); }).then(function (data) {
+      if (data && data.content) {
+        body.textContent = data.content;
+      } else {
+        body.textContent = '加载失败：' + ((data && data.error) || '未知错误');
+      }
+    }).catch(function () {
+      body.textContent = '请求失败，请检查服务状态';
+    });
+  }
+
+  function closeChangelogModal() {
+    var modal = $('changelog-modal');
+    if (modal) modal.hidden = true;
+  }
+
+  // 在升级成功横幅 action 按钮旁动态插入一个"📋 查看更新日志"快捷链接
+  function ensureChangelogShortcut(banner, action) {
+    if (!banner || !action) return;
+    var link = banner.querySelector('.changelog-shortcut');
+    if (link) return;
+    link = document.createElement('button');
+    link.className = 'update-banner-link changelog-shortcut';
+    link.type = 'button';
+    link.textContent = '📋 查看更新日志';
+    link.style.cssText = 'margin-left:8px;background:transparent;border:0;color:var(--primary);cursor:pointer;font-size:12.5px;text-decoration:underline;padding:0;';
+    link.addEventListener('click', function (ev) {
+      ev.stopPropagation();
+      openChangelogModal();
+    });
+    if (action.parentNode) {
+      action.parentNode.insertBefore(link, action.nextSibling);
+    }
   }
 
   /* —— 把升级字段纳入 loadConfig / collectConfig —— */
