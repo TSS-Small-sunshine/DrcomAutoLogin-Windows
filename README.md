@@ -1,11 +1,11 @@
-# 星尘闪连 (Stardust Flash Link) — Dr.COM 校园网自动登录（Windows 版）
-
 <p align="center">
   <img src="packaging/branding/app.ico" alt="Logo" width="80"/>
 </p>
 
+<h1 align="center">星尘闪连</h1>
+
 <p align="center">
-  <b>星尘闪连 (Stardust Flash Link)</b> · Windows 校园网自动登录
+  <b>Stardust Flash Link</b> · Windows 校园网自动登录
 </p>
 
 <p align="center">
@@ -13,10 +13,12 @@
   <a href="https://github.com/TSS-Small-sunshine/DrcomAutoLogin-Windows/blob/main/LICENSE"><img src="https://img.shields.io/github/license/TSS-Small-sunshine/DrcomAutoLogin-Windows?style=flat-square" alt="License"/></a>
   <a href="https://github.com/TSS-Small-sunshine/DrcomAutoLogin-Windows/stargazers"><img src="https://img.shields.io/github/stars/TSS-Small-sunshine/DrcomAutoLogin-Windows?style=flat-square" alt="Stars"/></a>
   <a href="#快速开始"><img src="https://img.shields.io/badge/platform-Windows%2010%2F11-blue?style=flat-square" alt="Platform"/></a>
-  <a href="#快速开始"><img src="https://img.shields.io/badge/Python-3.12-embedded-blueviolet?style=flat-square&logo=python&logoColor=white" alt="Python Embedded"/></a>
+  <a href="#快速开始"><img src="https://img.shields.io/badge/Python-3.12%20embedded-blueviolet?style=flat-square&logo=python&logoColor=white" alt="Python 3.12 embedded"/></a>
 </p>
 
-Windows 版校园网认证网关自动登录工具：开机自启 + 周期自检 + 智能离线识别 + Web UI 图形化配置。
+<p align="center">
+  Windows 校园网认证网关自动登录工具：开机自启 + 周期自检 + 智能离线识别 + Web UI 图形化配置。
+</p>
 
 ## 📑 目录
 
