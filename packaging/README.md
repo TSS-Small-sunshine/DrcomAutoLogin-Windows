@@ -6,7 +6,7 @@
 
 1. 双击运行 `build.bat`
 2. 等待脚本完成（首次会下载 Inno Setup 6 与 NSSM）
-3. 构建产物：`output\DrcomAutoLogin-Setup-v2.0.0.exe`
+3. 构建产物：`output\StardustFlashLink-Setup-v2.0.1.exe`
 
 `build.bat` 步骤：
 - 自提升为管理员
@@ -18,7 +18,7 @@
 
 ## 终端用户：安装 / 卸载
 
-**安装**：双击 `DrcomAutoLogin-Setup-v2.0.0.exe`，按向导提示操作。
+**安装**：双击 `StardustFlashLink-Setup-v2.0.1.exe`，按向导提示操作。
 - 默认安装到 `C:\Program Files\DrcomAutoLogin\`
 - 自动注册 Windows 服务 `DrcomAutoLogin`
 - 启动 Web UI: 访问 `http://127.0.0.1:8848`

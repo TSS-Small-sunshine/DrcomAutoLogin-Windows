@@ -44,6 +44,26 @@
 
 ---
 
+## [v2.0.1] - 2026-09-20
+
+Hotfix：安装包文件名 + Web UI 品牌图标升级。
+
+### ✨ 新增
+- **Web UI 品牌图标替换**：从「星」字占位换成 logo 图（`branding/web-logo-{16,32,64,128,256}.png`），由 `app.ico` 提取；同时 `<head>` 加 favicon (`web-logo-32.png`)
+- **安装包文件名升级**：`OutputBaseFilename` 从 `DrcomAutoLogin-Setup-*` 改为 **`StardustFlashLink-Setup-*`**，与新仓库名 `StardustFlashLink` 一致
+
+### 🔧 变更
+- 全部版本字面量 2.0.0 → 2.0.1
+- README 清理：去掉冗余「用户」措辞（CHANGELOG 历史记录保留）
+- `OutputBaseFilename` 改 `StardustFlashLink-Setup-v{#MyAppVersion}`
+
+### 保留（兼容性必需）
+- NSSM 服务名 `DrcomAutoLogin`（已发布安装都依赖这个名字）
+- 安装路径 `C:\Program Files\DrcomAutoLogin\`
+- `AppId = {{A8F2E3D1-7C4B-4F89-9D5E-1A2B3C4D5E6F}}`（Windows 卸载注册表项）
+
+---
+
 ## [v1.3.5] - 2026-09-20
 
 ### ✨ 新增

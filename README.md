@@ -74,7 +74,7 @@
 
 ## 📸 截图
 
-> ⚠️ 截图占位 — 用户后续会提供背景图后补上。
+> ⚠️ 截图占位 — 正式版会补上。
 
 - 安装向导
 - Web UI 主界面
@@ -91,7 +91,7 @@
 
 ## 🏷 项目状态
 
-**当前版本**：v2.0.0（2026-09-20） · **状态**：🟢 积极维护
+**当前版本**：v2.0.1（2026-09-20） · **状态**：🟢 积极维护
 
 [最新 Release](https://github.com/TSS-Small-sunshine/StardustFlashLink/releases/latest) ·
 [更新日志](https://github.com/TSS-Small-sunshine/StardustFlashLink/releases) ·
@@ -280,8 +280,8 @@ DrcomAutoLogin-Windows/
 
 1. 安装 **Inno Setup 6**（`build.bat` 会检测，缺失时可自动下载安装）
 2. 双击运行 `packaging\build.bat`（会自动准备 NSSM 并调用 `ISCC.exe` 编译）
-3. 构建产物：`packaging\output\DrcomAutoLogin-Setup-v2.0.0.exe`
-4. 把该 `.exe` 发给用户，双击即按向导安装（可勾选「创建桌面快捷方式」「安装后立即启动服务」）
+3. 构建产物：`packaging\output\StardustFlashLink-Setup-v2.0.1.exe`
+4. 把该 `.exe` 分发出去，双击即按向导安装（可勾选「创建桌面快捷方式」「安装后立即启动服务」）
 
 ---
 
@@ -363,7 +363,7 @@ Web UI →「配置」标签页 → 点「修改密码」→ 输入新密码保�
 - **Web UI 只监听 `127.0.0.1`**：不对局域网 / 外网开放，其它设备无法访问
 - **接口不返回密码**：状态接口只返回 `password_status`（`set` / `missing`），永不返回密码原文
 - **日志脱敏**：密码不写入任何日志文件；`config.json` 也不保存密码
-- **权限建议**：`password.txt` 所在目录建议只授予当前用户访问权限（服务以系统账户运行，注意共享机器的风险）
+- **权限建议**：`password.txt` 所在目录建议只授予本机账户访问权限（服务以系统账户运行，注意共享机器的风险）
 
 ---
 
@@ -386,7 +386,7 @@ Web UI →「配置」标签页 → 点「修改密码」→ 输入新密码保�
 | 文档 | 内容 |
 | --- | --- |
 | 本 `README.md` | 功能、架构、协议、快速开始、常见问题 |
-| [`packaging/README.md`](packaging/README.md) | 开发者构建安装包的步骤、终端用户安装 / 卸载流程、安装包目录结构、已知限制 |
+| [`packaging/README.md`](packaging/README.md) | 开发者构建安装包的步骤、安装 / 卸载流程、安装包目录结构、已知限制 |
 
 ---
 
@@ -403,8 +403,8 @@ Web UI →「配置」标签页 → 点「修改密码」→ 输入新密码保�
 | **v1.3.3** | 新增**配置导入/导出**：Web UI「配置」面板新增「📤 导出配置」和「📥 导入配置」两个按钮。导出把 `config.json` + `password.txt`（如有）+ `manifest.json` 打包成 `config-export-<时间戳>.zip` 下载；导入上传 zip 后做合法性校验（manifest schema_version、config 字段校验、password 非空），通过后原子写入磁盘并返回 `{need_restart: true}`，由用户手动点「重启服务」按钮应用新配置。**纯标准库实现**（`zipfile` + `io`），不引入新依赖。`POST /api/config/import` 路由必须放在 JSON 解析**之前**分发（zip 是二进制 body 会被现有 `json.loads` 拦截）。 |
 | **v1.3.4** | **日志分级**：Web UI「日志」面板顶部新增等级筛选 chip（全部 / INFO / WARN / ERROR），后端 `GET /api/log_tail` 新增可选 `level` query 参数（`info` / `warning` / `error` / `debug` / `critical`），按等级过滤返回行。响应体新增 `level_filter` 字段（向后兼容：旧客户端忽略未知字段）。无效 level 返回 400。**保持单文件日志**（不拆多个 log 文件），通过前端 chip 切换实现产品级「按等级筛选」体验。 |
 | **v1.4.0** | **项目重命名为「星尘闪连 (Stardust Flash Link)」**，沿用 `DrcomAutoLogin` NSSM 服务名、`AppId` 与全部 API 路径（保证旧版可正常卸载 / 升级）。安装包新增 `branding\app.ico`（应用图标，256/128/64/48/32/24/16 多尺寸 ICO）与 `branding\wizard.bmp`（164×314 24-bit 安装器左侧品牌横幅），由 Inno Setup `SetupIconFile` / `WizardImageFile` 引入；Python 脚本头部、L37 install.bat 标题、L31 uninstall.bat 标题、build.ps1 头部与 banner 同步更新。 |
-| **v1.3.5** | **GitHub 国内镜像加速** + **手动触发更新**：(1) `_check_github_latest` 和 `_download_installer` 按 `GITHUB_API_MIRRORS` 列表（`None` 主源 + `https://gh-proxy.com` / `ghfast.top` / `mirror.ghproxy.com` 三个镜像）串行 fallback；主源超时/失败时自动尝试镜像，避免国内用户机器上 `api.github.com` 不可达导致自动升级静默失效。(2) Web UI「配置」面板「自动化」card 末尾新增「🔍 立即检查更新」和「⬆️ 立即升级」两个按钮，调用 v1.3 已有的 `/api/update/check` 和 `/api/update/install` 端点（零新增 API），升级按钮带 confirm 确认对话框。 |
-| **v2.0.0** | **当前版本。进入 2.0 时代**：从 v1.4 之前的用户自制 logo 改用**纯生成的蔚蓝档案（Blue Archive）经典蓝渐变背景**（`#A0D8EF` → `#3D7DC9` → `#1B3A6B`），164×314 24-bit BMP 嵌入安装器左侧 164×314 横幅；新增 **EULA 用户协议**（`packaging/branding/EULA.rtf`，ISCC `LicenseFile` 原生支持）—— 9 节完整条款（服务范围 / 许可 / 用户责任 / 免责声明 / 隐私 / 第三方组件 / 修改 / 终止 / 法律）。**主版本号 bump** 是视觉 / 法务姿态升级（视觉重做 + 协议引入），技术栈不变。 |
+| **v1.3.5** | **GitHub 国内镜像加速** + **手动触发更新**：(1) `_check_github_latest` 和 `_download_installer` 按 `GITHUB_API_MIRRORS` 列表（`None` 主源 + `https://gh-proxy.com` / `ghfast.top` / `mirror.ghproxy.com` 三个镜像）串行 fallback；主源超时/失败时自动尝试镜像，避免国内机器上 `api.github.com` 不可达导致自动升级静默失效。(2) Web UI「配置」面板「自动化」card 末尾新增「🔍 立即检查更新」和「⬆️ 立即升级」两个按钮，调用 v1.3 已有的 `/api/update/check` 和 `/api/update/install` 端点（零新增 API），升级按钮带 confirm 确认对话框。 |
+| **v2.0.0** | **当前版本。进入 2.0 时代**：从 v1.4 之前的自做 logo 改用**纯生成的蔚蓝档案（Blue Archive）经典蓝渐变背景**（`#A0D8EF` → `#3D7DC9` → `#1B3A6B`），164×314 24-bit BMP 嵌入安装器左侧 164×314 横幅；新增 **EULA 协议**（`packaging/branding/EULA.rtf`，ISCC `LicenseFile` 原生支持）—— 9 节完整条款（服务范围 / 许可 / 使用方责任 / 免责声明 / 隐私 / 第三方组件 / 协议修改 / 终止 / 适用法律）。**主版本号 bump** 是视觉 / 法务姿态升级（视觉重做 + 协议引入），技术栈不变。 |
 
 > **版本号说明**：本项目从 `1.x` 进入 `2.x` 公开版本线，**当前版本为 `2.0.0`**。
 > - `联网_service.py` 的 `VERSION` 常量（显示在日志与「关于」页）、Inno Setup 安装包版本、安装 / 卸载脚本与构建脚本中的版本字样，**全部是同一个 `2.0.0`**，不再存在多套并存的编号；
