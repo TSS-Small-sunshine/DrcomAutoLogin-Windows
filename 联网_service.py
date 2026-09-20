@@ -24,6 +24,7 @@
 """
 
 import hashlib
+import io
 import json
 import logging
 import os
@@ -39,6 +40,7 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
+import zipfile
 from datetime import datetime, timedelta
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
@@ -83,6 +85,11 @@ SERVICE_NAME = "DrcomAutoLogin"
 UPGRADE_HISTORY_MAX_LINES = 50
 UPGRADE_SUCCESS_TTL_SEC = 5 * 60  # 成功后绿 banner 仅保留 5 分钟
 BACKUP_RETENTION_DAYS = 7
+
+# —— 配置导入/导出（zip）——
+CONFIG_EXPORT_SCHEMA_VERSION = 1
+CONFIG_EXPORT_TOOL = "DrcomAutoLogin-Windows"
+CONFIG_IMPORT_MAX_BYTES = 4 * 1024 * 1024  # 4MB 安全上限
 
 
 # ============================================================
@@ -306,7 +313,15 @@ def _save_config_raw(cfg):
 
 
 def _save_config(cfg):
-    """校验 + 写入。失败抛 ValueError。"""
+    """校验 + 写入。失败抛 ValueError。
+    兜底：先按 DEFAULT_CONFIG 把缺失字段补全，再校验、再写盘。
+    这样前端 collectConfig 漏字段或老 config.json 缺失 v1.3 字段时，
+    仍能按默认值落盘而不是直接报错（前后端字段没收口的修复）。
+    """
+    merged = _default_config()
+    for k, v in cfg.items():
+        merged[k] = v
+    cfg = merged
     errors = _validate_config(cfg)
     if errors:
         raise ValueError("; ".join(errors))
@@ -2465,6 +2480,11 @@ code.path {
         </select>
         <div class="hint">服务会定期访问 GitHub API 检查新版（未认证 60 req/h）</div>
       </div>
+      <div class="field">
+        <label for="cfg-update-disk">下载前最小剩余磁盘（MB）</label>
+        <input type="number" id="cfg-update-disk" class="cfg-lg" min="50" max="10240" step="1" inputmode="numeric">
+        <div class="hint">下载安装包前要求磁盘剩余 ≥ 此值（50-10240 MB，默认 200）</div>
+      </div>
     </div>
 
     <div class="card section">
@@ -3440,6 +3460,8 @@ code.path {
         if (au) au.checked = !!c.auto_update_enabled;
         var iv = $('cfg-update-interval');
         if (iv) iv.value = String(c.update_check_interval_hours || 6);
+        var diskEl = $('cfg-update-disk');
+        if (diskEl) diskEl.value = String(c.update_min_free_disk_mb || 200);
       }).catch(function () { /* 配置页：忽略二次拉取失败 */ });
     });
   };
@@ -3450,6 +3472,8 @@ code.path {
     cfg.auto_update_enabled = !!(($('cfg-auto-update-enabled') || {}).checked);
     var iv = parseInt(($('cfg-update-interval') || {}).value, 10);
     cfg.update_check_interval_hours = (iv === 12 || iv === 24) ? iv : 6;
+    var disk = parseInt(($('cfg-update-disk') || {}).value, 10);
+    cfg.update_min_free_disk_mb = (typeof disk === 'number' && !isNaN(disk) && disk >= 50 && disk <= 10240) ? disk : 200;
     return cfg;
   };
 
