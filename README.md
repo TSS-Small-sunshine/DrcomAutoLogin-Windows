@@ -214,7 +214,7 @@ DrcomAutoLogin-Windows/
 
 1. 安装 **Inno Setup 6**（`build.bat` 会检测，缺失时可自动下载安装）
 2. 双击运行 `packaging\build.bat`（会自动准备 NSSM 并调用 `ISCC.exe` 编译）
-3. 构建产物：`packaging\output\DrcomAutoLogin-Setup-v1.3-fix.exe`
+3. 构建产物：`packaging\output\DrcomAutoLogin-Setup-v1.3.1.exe`
 4. 把该 `.exe` 发给用户，双击即按向导安装（可勾选「创建桌面快捷方式」「安装后立即启动服务」）
 
 ---
@@ -325,10 +325,10 @@ Web UI →「配置」标签页 → 点「修改密码」→ 输入新密码保�
 | **v1.1** | 安装包内嵌 Python 3.12 运行时（终端用户无需预装，也不再受架构差异影响）；GitHub Actions 自动构建流水线（push 后自动产出 `.exe` 并发布到 `installer` Release）；Web UI 现代化重设计（亮 / 暗主题、KPI 卡片、分段控件、终端日志、Toast）。修复 `.panel.active` 白屏（动画未推进时永久停在 `opacity:0`，补静态兜底）。 |
 | **v1.2** | Web UI 重设计为 **DeepSeek 风格**（极简、淡蓝 / 淡紫渐变背景、细腻网格底纹、大圆角、柔和阴影、大字号 KPI、pill 按钮、状态点呼吸动效、顶部细提示条）；配置页密码字段标注为「账户登录密码」（明确这是校园网认证密码，而非系统登录密码）；安装器在升级时**自动先停服务再覆盖文件**——避免旧 Python 进程持有 `联网_service.py` 句柄导致新版本装不上；统一版本号到 `1.x` 公开版本线（废弃之前并存的 `2.0` / `2.1` 内部代号）。 |
 | **v1.3** | **静默自动升级**：服务后台定期检查 GitHub `/releases/latest` —— 本机版本落后则自动下载安装器、校验 SHA256、备份当前脚本、调 Inno Setup 静默安装、服务自动重启；升级全程无需操作，失败立即写日志并显示红色横幅 + 升级历史。Web UI 状态面板顶部新增升级状态横幅；配置面板「自动化」card 新增「启用自动升级」开关与「检查间隔」下拉；关于面板新增「查看升级历史」按钮（弹窗显示 `logs/upgrade.log`）。配置面板布局调整：「账户与登录密码」card（账号 + 运营商 + 密码）整体上移到顶部。 |
-| **v1.3-fix** | 当前版本。Hotfix：修复 v1.3 引入的**前后端字段没收口**问题 —— `_save_config` 在校验前 merge 默认值（兜底），老 config.json 缺 `update_min_free_disk_mb` 等 v1.3 字段时不再报错；同时 Web UI 自动升级 card 增加「下载前最小剩余磁盘」输入框。仓库内全部版本字面量（`联网_service.py` / `setup.iss` / `install.bat` / `uninstall.bat` / `build.ps1` / CI fallback）统一对齐到 `1.3-fix`。 |
+| **v1.3.1** | 当前版本。修复 v1.3 引入的**前后端字段没收口**问题 —— `_save_config` 在校验前 merge 默认值（兜底），老 config.json 缺 `update_min_free_disk_mb` 等 v1.3 字段时不再报错；Web UI 自动升级 card 增加「下载前最小剩余磁盘」输入框。同时修复**版本比较 bug**：`_parse_version` 不识别 `-fix` / `-rc1` 等非数字后缀，`_parse_version("1.3-fix")` 与 `1.3` 比较时错误地返回 0（"已是最新"），导致 v1.3 服务无法识别并升级到 `v1.3-fix` / `v1.3.1`；重写解析逻辑，遇非数字后缀追加 sentinel `999`，使 hotfix 版本严格大于同主版本号（`1.3-fix` > `1.3`，`1.3-fix` > `1.3.1`）。仓库内全部版本字面量（`联网_service.py` / `setup.iss` / `install.bat` / `uninstall.bat` / `build.ps1` / CI fallback）统一对齐到 `1.3.1`。 |
 
-> **版本号说明**：本项目统一使用 `1.x` 公开版本线，**当前版本为 `1.3-fix`**。
-> - `联网_service.py` 的 `VERSION` 常量（显示在日志与「关于」页）、Inno Setup 安装包版本、安装 / 卸载脚本与构建脚本中的版本字样，**全部是同一个 `1.3-fix`**，不再存在多套并存的编号；
+> **版本号说明**：本项目统一使用 `1.x` 公开版本线，**当前版本为 `1.3.1`**。
+> - `联网_service.py` 的 `VERSION` 常量（显示在日志与「关于」页）、Inno Setup 安装包版本、安装 / 卸载脚本与构建脚本中的版本字样，**全部是同一个 `1.3.1`**，不再存在多套并存的编号；
 > - 历史上曾短暂并存过 `2.0` / `2.1` 内部代号（由「命令行脚本 → Web UI 版」的迭代历史沿用而来），该套编号已废弃；
 > - **GitHub Release 标签 `v1.0`** 是本项目的**首次公开发布**记录，属于历史事实，保持不变；
-> - 后续公开发布在 `1.x` 线上递增（`1.3-fix` → `1.4` → …）。
+> - 后续公开发布在 `1.x` 线上递增（`1.3.1` → `1.4` → …）。

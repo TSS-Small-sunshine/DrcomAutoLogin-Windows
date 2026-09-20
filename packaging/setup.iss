@@ -1,14 +1,14 @@
 ﻿; ============================================================
 ;   setup.iss - Dr.COM 校园网自动登录 Inno Setup 6 脚本
-;   版本: v1.3-fix
+;   版本: v1.3.1
 ;   编码: UTF-8 + BOM（ISCC 推荐 UTF-8 BOM）
-;   目标: 生成 DrcomAutoLogin-Setup-v1.3-fix.exe
+;   目标: 生成 DrcomAutoLogin-Setup-v1.3.1.exe
 ; ============================================================
 
 #define MyAppName "Dr.COM 校园网自动登录"
 ; 允许 CI 用 ISCC /DMyAppVersion=x.y 覆盖；本地直接编译时用下面的默认值
 #ifndef MyAppVersion
-  #define MyAppVersion "1.3-fix"
+  #define MyAppVersion "1.3.1"
 #endif
 #define MyAppPublisher "Dr.COM AutoLogin"
 #define MyAppExeName "联网_service.py"
@@ -207,7 +207,7 @@ begin
   end;
   Exec(NSSM, 'set DrcomAutoLogin AppDirectory "' + AppDir + '"', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
   Exec(NSSM, 'set DrcomAutoLogin DisplayName "Dr.COM 校园网自动登录"', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
-  Exec(NSSM, 'set DrcomAutoLogin Description "Dr.COM 校园网认证 - Web UI 配置版 v1.3-fix"', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+  Exec(NSSM, 'set DrcomAutoLogin Description "Dr.COM 校园网认证 - Web UI 配置版 v1.3.1"', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
   Exec(NSSM, 'set DrcomAutoLogin Start SERVICE_AUTO_START', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
   Exec(NSSM, 'set DrcomAutoLogin AppStdout "' + AppDir + '\logs\service_stdout.log"', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
   Exec(NSSM, 'set DrcomAutoLogin AppStderr "' + AppDir + '\logs\service_stderr.log"', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);

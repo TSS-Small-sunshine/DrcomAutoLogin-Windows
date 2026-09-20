@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-联网_service.py — Dr.COM 校园网自动登录（Web UI 配置版 v1.3-fix）
+联网_service.py — Dr.COM 校园网自动登录（Web UI 配置版 v1.3.1）
 
 架构
     主线程：阻塞在 ThreadingHTTPServer 上，提供 Web UI 与 REST API。
@@ -48,7 +48,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 # ============================================================
 # 常量
 # ============================================================
-VERSION = "1.3-fix"
+VERSION = "1.3.1"
 BACKOFF_LEVELS = [5, 10, 20, 40, 60]  # 分钟，索引 = 连续失败次数，封顶 60
 
 DEFAULT_CONFIG = {
@@ -689,7 +689,16 @@ def run_periodic():
 # 自动升级（v1.3 新增）— 版本比较 / GitHub 探测 / 日志 / 状态
 # ============================================================
 def _parse_version(s):
-    """将 "1.2" / "v1.3.1" 解析为可比较的元组。解析失败返回空元组。"""
+    """将 "1.2" / "v1.3.1" / "1.3-fix" / "1.3.1-hotfix" 解析为可比较元组。解析失败返回 ()。
+
+    规则:
+    - 忽略前缀 'v' / 'V'
+    - '.' 分隔数字段;每个数字段必须是纯数字,或数字后带非数字后缀( '-fix' / '_hotfix' / '-rc1' 等)
+    - 遇到非数字后缀时,追加 sentinel 999 让补丁版本严格大于同主版本号 (1.3-fix > 1.3)
+      但又人工高于任意后续小版本号( 1.3-fix > 1.3.1 );遇到后缀后立即停止解析,
+      防止 "1.3-fix.5" 这类异常输入被错误地拆出更多段
+    - 某段完全不包含数字 → 解析失败返回 ()
+    """
     if not isinstance(s, str):
         return ()
     s = s.strip().lstrip("v").lstrip("V")
@@ -700,21 +709,22 @@ def _parse_version(s):
         return ()
     out = []
     for part in s.split("."):
-        try:
-            out.append(int(part))
-        except ValueError:
-            # 含非数字段：截到首个非数字段为止
-            digits = ""
-            for c in part:
-                if c.isdigit():
-                    digits += c
-                else:
-                    break
-            if digits:
-                out.append(int(digits))
+        # 同一段内从头取连续数字;遇到第一个非数字即停
+        digits = ""
+        for c in part:
+            if c.isdigit():
+                digits += c
             else:
-                out.append(0)
                 break
+        if not digits:
+            return ()  # 该段没数字,解析失败
+        out.append(int(digits))
+        # 同一段里剩余字符(如 "-fix" / "_hotfix" / "-rc1" 等)→ 追加 sentinel
+        if len(part) > len(digits):
+            # 任何非数字后缀都让补丁版 > 同主版本(且人工高于任意后续小版本)
+            out.append(999)
+            # 后续段不再解析(防止 "1.3-fix.5" 被错误解析)
+            break
     return tuple(out)
 
 
