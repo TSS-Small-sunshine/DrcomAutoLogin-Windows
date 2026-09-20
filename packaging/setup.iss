@@ -8,7 +8,7 @@
 #define MyAppName "Dr.COM 校园网自动登录"
 ; 允许 CI 用 ISCC /DMyAppVersion=x.y 覆盖；本地直接编译时用下面的默认值
 #ifndef MyAppVersion
-  #define MyAppVersion "1.2"
+  #define MyAppVersion "1.3"
 #endif
 #define MyAppPublisher "Dr.COM AutoLogin"
 #define MyAppExeName "联网_service.py"
