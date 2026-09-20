@@ -220,11 +220,63 @@ begin
 end;
 
 // ============================================================
-//   CurStepChanged - 安装完成后调用
+//   WaitServiceStopped - 轮询等待服务进入 SERVICE_STOPPED 状态
+//
+//   用途：在 CurStepChanged(ssInstall) 调 nssm stop 之后再调，
+//         最长等待 TimeoutMs 毫秒。超时未停会弹 MsgBox 提示用户。
+//
+//   实现说明：Inno Setup 6 内置函数里没有 QueryServiceStatus，
+//             因此用 nssm stop 的退出码做轮询：
+//             - 服务已停止（ERROR_SERVICE_NOT_ACTIVE）→ nssm 退出码 0
+//             - 服务仍在停止中或调用失败                  → nssm 退出码 1
+//             每隔 500ms 再调一次 nssm stop，直到它返回 0 或超时。
+//             单次 nssm stop 内部最多轮询 ~2.75s（10 次递增 sleep）。
+// ============================================================
+procedure WaitServiceStopped(const SvcName: string; TimeoutMs: Integer);
+var
+  NSSM: string;
+  Deadline: DWORD;
+  ResultCode: Integer;
+begin
+  NSSM := ExpandConstant('{app}') + '\tools\nssm.exe';
+  Deadline := GetTickCount + DWORD(TimeoutMs);
+  while GetTickCount < Deadline do
+  begin
+    Exec(NSSM, 'stop ' + SvcName, '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+    if ResultCode = 0 then Exit; // 已停止
+    Sleep(500);
+  end;
+  // 超时未停：提示用户，但不阻断安装（让用户至少能把新文件复制上去）
+  MsgBox('服务未在 30 秒内停止，安装可能失败。建议先手动停止服务再重试安装。',
+         mbError, MB_OK);
+end;
+
+// ============================================================
+//   CurStepChanged - 安装过程中分阶段钩子
+//
+//   - ssInstall   : 升级场景先把 DrcomAutoLogin 服务停掉再让 Inno 复制新文件，
+//                   避免旧 Python 进程仍持有 联网_service.py 句柄导致复制失败
+//                   或旧版继续跑（Web UI / 登录逻辑没升级）。全新安装场景下
+//                   服务不存在，跳过整个分支。
+//   - ssPostInstall: 注册服务、生成启动器、创建快捷方式（原有逻辑不变）。
 // ============================================================
 procedure CurStepChanged(CurStep: TSetupStep);
+var
+  NSSM: string;
+  ResultCode: Integer;
 begin
-  if CurStep = ssPostInstall then
+  if CurStep = ssInstall then
+  begin
+    if RegKeyExists(HKEY_LOCAL_MACHINE, 'SYSTEM\CurrentControlSet\Services\DrcomAutoLogin') then
+    begin
+      // 调 nssm stop 请求 SCM 停止服务（首次调用内部最长等约 2.75s）
+      NSSM := ExpandConstant('{app}') + '\tools\nssm.exe';
+      Exec(NSSM, 'stop DrcomAutoLogin', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+      // 轮询直到 STOPPED 或 30 秒超时（超时未停则弹 MsgBox 提示但继续安装）
+      WaitServiceStopped('DrcomAutoLogin', 30000);
+    end;
+  end
+  else if CurStep = ssPostInstall then
   begin
     CreateLauncherBat();
     RegisterService();
