@@ -1585,20 +1585,20 @@ code.path {
 
     <div class="card section" id="card-password">
       <div class="section-head">
-        <h2 class="section-title">密码 <span class="badge badge-muted" id="pwd-badge">状态未知</span></h2>
-        <p class="section-desc" style="margin:0;">密码仅保存于本机 password.txt，保存后立即生效，无需重启。</p>
+        <h2 class="section-title">账户登录密码 <span class="badge badge-muted" id="pwd-badge">状态未知</span></h2>
+        <p class="section-desc" style="margin:0;">校园网账户登录密码仅保存于本机 password.txt，保存后立即生效，无需重启。</p>
       </div>
       <div class="field">
-        <label for="pwd-new">新密码</label>
+        <label for="pwd-new">账户登录密码</label>
         <input type="password" id="pwd-new" autocomplete="new-password">
         <div class="hint">至少 1 个字符</div>
       </div>
       <div class="field">
-        <label for="pwd-confirm">确认新密码</label>
+        <label for="pwd-confirm">再次输入账户登录密码</label>
         <input type="password" id="pwd-confirm" autocomplete="new-password">
         <div class="err" id="err-pwd" role="alert"></div>
       </div>
-      <button class="btn btn-secondary" id="btn-save-pwd" type="button">🔑 修改密码</button>
+      <button class="btn btn-secondary" id="btn-save-pwd" type="button">🔑 保存账户登录密码</button>
     </div>
 
     <div class="save-bar">
@@ -2137,12 +2137,12 @@ code.path {
         var p1 = $('pwd-new').value;
         var p2 = $('pwd-confirm').value;
         text($('err-pwd'), '');
-        if (!p1) { setFieldError('pwd-new', 'err-pwd', '新密码不能为空'); return; }
-        if (p1 !== p2) { setFieldError('pwd-confirm', 'err-pwd', '两次输入的密码不一致'); return; }
+        if (!p1) { setFieldError('pwd-new', 'err-pwd', '账户登录密码不能为空'); return; }
+        if (p1 !== p2) { setFieldError('pwd-confirm', 'err-pwd', '两次输入的账户登录密码不一致'); return; }
         pwdBtn.disabled = true;
         API.savePassword(p1).then(function (r) {
           if (r && r.ok) {
-            toast('密码已更新', 'success');
+            toast('账户登录密码已更新', 'success');
             $('pwd-new').value = '';
             $('pwd-confirm').value = '';
             clearErrors();
