@@ -1,4 +1,4 @@
-# Dr.COM 校园网自动登录 - 安装包说明
+# 星尘闪连 (Stardust Flash Link) — Dr.COM 校园网自动登录 - 安装包说明
 
 本目录用于**开发者构建 Inno Setup EXE 安装包**。
 
@@ -6,7 +6,7 @@
 
 1. 双击运行 `build.bat`
 2. 等待脚本完成（首次会下载 Inno Setup 6 与 NSSM）
-3. 构建产物：`output\DrcomAutoLogin-Setup-v1.3.5.exe`
+3. 构建产物：`output\DrcomAutoLogin-Setup-v1.4.0.exe`
 
 `build.bat` 步骤：
 - 自提升为管理员
@@ -18,14 +18,14 @@
 
 ## 终端用户：安装 / 卸载
 
-**安装**：双击 `DrcomAutoLogin-Setup-v1.3.5.exe`，按向导提示操作。
+**安装**：双击 `DrcomAutoLogin-Setup-v1.4.0.exe`，按向导提示操作。
 - 默认安装到 `C:\Program Files\DrcomAutoLogin\`
 - 自动注册 Windows 服务 `DrcomAutoLogin`
 - 启动 Web UI: 访问 `http://127.0.0.1:8848`
 - 配置文件：`C:\Program Files\DrcomAutoLogin\config.json`
 - 密码文件：`C:\Program Files\DrcomAutoLogin\password.txt`
 
-**卸载**：控制面板 → 程序与功能 → Dr.COM 校园网自动登录 → 卸载。
+**卸载**：控制面板 → 程序与功能 → 星尘闪连 (Stardust Flash Link) → 卸载。
 卸载会自动停止并移除 Windows 服务。
 
 ## 目录结构

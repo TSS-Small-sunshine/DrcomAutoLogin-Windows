@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-联网_service.py — Dr.COM 校园网自动登录（Web UI 配置版 v1.3.5）
+联网_service.py — 星尘闪连 (Stardust Flash Link) — Dr.COM 校园网自动登录（Web UI 配置版 v1.4.0）
 
 架构
     主线程：阻塞在 ThreadingHTTPServer 上，提供 Web UI 与 REST API。
@@ -48,7 +48,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 # ============================================================
 # 常量
 # ============================================================
-VERSION = "1.3.5"
+VERSION = "1.4.0"
 BACKOFF_LEVELS = [5, 10, 20, 40, 60]  # 分钟，索引 = 连续失败次数，封顶 60
 
 DEFAULT_CONFIG = {
@@ -1924,7 +1924,7 @@ _HTML_PAGE = r"""<!DOCTYPE html>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="color-scheme" content="light dark">
-<title>Dr.COM 校园网自动登录</title>
+<title>星尘闪连 (Stardust Flash Link) — Dr.COM 校园网自动登录</title>
 <style>
 /* ============================================================
    1. 设计令牌 — 浅色（默认；DeepSeek 风格：淡蓝/淡紫渐变）
@@ -2515,8 +2515,8 @@ code.path {
 <header class="topbar">
   <div class="topbar-inner">
     <div class="brand">
-      <span class="brand-mark" aria-hidden="true">D</span>
-      <span class="brand-name">Dr.COM 校园网自动登录</span>
+      <span class="brand-mark" aria-hidden="true">星</span>
+      <span class="brand-name">星尘闪连 — Dr.COM 校园网自动登录</span>
       <span class="ver-badge" id="ver-badge">v-</span>
     </div>
     <div class="topbar-actions">

@@ -1,6 +1,6 @@
 ﻿<#
 ============================================================
-  build.ps1 - Dr.COM 校园网自动登录 - Inno Setup 安装包构建脚本 (v1.3.5)
+  build.ps1 - 星尘闪连 (Stardust Flash Link) - Dr.COM 校园网自动登录 - Inno Setup 安装包构建脚本 (v1.4.0)
 
   为什么从 build.bat 改写为 PowerShell:
     1. cmd 的文件存在性判断（if-exist）在该机器某些 context 下即使文件存在也返回 false
@@ -23,7 +23,7 @@ $ErrorActionPreference = 'Stop'
 # ============================================================
 #   常量
 # ============================================================
-$AppVersionText  = 'v1.3.5'
+$AppVersionText  = 'v1.4.0'
 $LogPath         = $null   # 在路径解析后赋值
 $LangUrl         = 'https://raw.githubusercontent.com/jrsoftware/issrc/main/Files/Languages/ChineseSimplified.isl'
 $LangManualUrl   = 'https://github.com/jrsoftware/issrc/tree/main/Files/Languages'
@@ -149,7 +149,7 @@ try {
     #   Banner
     # ============================================================
     Write-Host '============================================================'
-    Write-Host ('  Dr.COM 校园网自动登录 - 安装包构建 (' + $AppVersionText + ')')
+    Write-Host ('  星尘闪连 (Stardust Flash Link) - 安装包构建 (' + $AppVersionText + ')')
     Write-Host '============================================================'
     Write-Info ('脚本:     ' + $PSCommandPath)
     Write-Info ('打包目录: ' + $PackagingDir)
