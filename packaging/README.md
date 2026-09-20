@@ -14,6 +14,8 @@
 - 检查 `..\tools\nssm.exe`（缺失则下载 NSSM 2.24 win64）
 - 调用 `ISCC.exe setup.iss` 编译生成 EXE
 
+也可以让 **GitHub Actions** 自动构建：推送代码到 `main` 即触发，产物在 Actions 的 Artifacts 中，并自动发布到 tag `installer` 的 Release（见仓库根 `README.md` 的「自动构建（GitHub Actions）」章节）。
+
 ## 终端用户：安装 / 卸载
 
 **安装**：双击 `DrcomAutoLogin-Setup-v2.1.exe`，按向导提示操作。

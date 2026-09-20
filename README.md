@@ -171,6 +171,7 @@ DrcomAutoLogin-Windows/
 ├── README.md                  # 本文件
 ├── LICENSE                    # MIT 许可证
 ├── .gitignore                 # 排除凭据 / 运行数据 / 构建产物
+├── .github/workflows/build-installer.yml  # 自动构建安装程序并发布 Release
 └── packaging/                 # 【可选】打包成安装程序
     ├── build.bat              # 构建入口（双击运行）
     ├── build.ps1              # 构建逻辑（自动准备 NSSM / Inno Setup）
@@ -205,6 +206,21 @@ DrcomAutoLogin-Windows/
 2. 双击运行 `packaging\build.bat`（会自动准备 NSSM 并调用 `ISCC.exe` 编译）
 3. 构建产物：`packaging\output\DrcomAutoLogin-Setup-v2.1.exe`
 4. 把该 `.exe` 发给用户，双击即按向导安装（可勾选「创建桌面快捷方式」「安装后立即启动服务」）
+
+---
+
+## 自动构建（GitHub Actions）
+
+推送代码到 `main` 后，GitHub Actions 会自动在 Windows runner 上用 Inno Setup 构建安装程序：
+
+1. 打开 <https://github.com/TSS-Small-sunshine/DrcomAutoLogin-Windows/actions>
+2. 构建完成后，产物在 `Actions → 对应 run → Artifacts → DrcomAutoLogin-Setup`
+
+也可以直接从 Releases 下载（**每次推送自动覆盖更新，链接固定**）：
+
+<https://github.com/TSS-Small-sunshine/DrcomAutoLogin-Windows/releases/tag/installer>
+
+> CI 流程：安装 Inno Setup 6 → 准备中文语言文件 → 下载 NSSM 到 `tools\` → 用 ISCC 编译 `packaging\setup.iss` → 校验产物 → 上传 artifact → 发布到 tag `installer` 的 Release。
 
 ---
 

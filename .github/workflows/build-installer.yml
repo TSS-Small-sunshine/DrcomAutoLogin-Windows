@@ -1,0 +1,138 @@
+name: Build Windows Installer
+
+on:
+  push:
+    branches: [ main, master ]
+    paths-ignore:
+      - '**.md'
+      - '.gitignore'
+      - '.gitattributes'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Inno Setup 6 (Chocolatey)
+        shell: pwsh
+        continue-on-error: true
+        run: choco install innosetup --no-progress -y
+
+      - name: Fallback install Inno Setup 6 (official silent installer)
+        shell: pwsh
+        run: |
+          $candidates = @(
+            "C:\Program Files (x86)\Inno Setup 6\ISCC.exe",
+            "C:\Program Files\Inno Setup 6\ISCC.exe"
+          )
+          if ($candidates | Where-Object { Test-Path $_ }) { Write-Host "ISCC 已就绪（Chocolatey 安装成功）"; exit 0 }
+          Write-Host "Chocolatey 未装上，改用官方静默安装…"
+          $exe = Join-Path $env:RUNNER_TEMP "innosetup.exe"
+          Invoke-WebRequest -Uri "https://jrsoftware.org/download.php/is.exe" -OutFile $exe -UseBasicParsing
+          Start-Process -FilePath $exe -ArgumentList "/VERYSILENT","/SUPPRESSMSGBOXES","/NORESTART","/SP-" -Wait
+          if (-not ($candidates | Where-Object { Test-Path $_ })) { throw "Inno Setup 安装失败" }
+
+      - name: Locate ISCC and ensure Chinese language file
+        shell: pwsh
+        run: |
+          $iscc = @(
+            "C:\Program Files (x86)\Inno Setup 6\ISCC.exe",
+            "C:\Program Files\Inno Setup 6\ISCC.exe"
+          ) | Where-Object { Test-Path $_ } | Select-Object -First 1
+          if (-not $iscc) { throw "未找到 ISCC.exe" }
+          "ISCC=$iscc" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          Write-Host "ISCC = $iscc"
+
+          $langDir  = Join-Path (Split-Path $iscc -Parent) "Languages"
+          $langFile = Join-Path $langDir "ChineseSimplified.isl"
+          if (-not (Test-Path $langFile)) {
+            New-Item -ItemType Directory -Force -Path $langDir | Out-Null
+            Invoke-WebRequest -Uri "https://raw.githubusercontent.com/jrsoftware/issrc/main/Files/Languages/ChineseSimplified.isl" -OutFile $langFile -UseBasicParsing
+            Write-Host "已下载中文语言文件"
+          }
+          $size = (Get-Item $langFile).Length
+          Write-Host "ChineseSimplified.isl = $size 字节"
+          if ($size -lt 1000) { throw "中文语言文件异常（$size 字节）" }
+
+      - name: Prepare NSSM
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path "tools" | Out-Null
+          $zip = Join-Path $env:RUNNER_TEMP "nssm.zip"
+          Invoke-WebRequest -Uri "https://nssm.cc/release/nssm-2.24.zip" -OutFile $zip -UseBasicParsing
+          $dst = Join-Path $env:RUNNER_TEMP "nssm-extract"
+          if (Test-Path $dst) { Remove-Item $dst -Recurse -Force }
+          Expand-Archive -Path $zip -DestinationPath $dst -Force
+          Copy-Item (Join-Path $dst "nssm-2.24\win64\nssm.exe") "tools\nssm.exe" -Force
+          $size = (Get-Item "tools\nssm.exe").Length
+          Write-Host "tools\nssm.exe = $size 字节"
+          if ($size -lt 100000) { throw "nssm.exe 异常" }
+
+      - name: Resolve version
+        shell: pwsh
+        run: |
+          if ("${{ github.ref_type }}" -eq "tag") {
+            $v = "${{ github.ref_name }}" -replace '^v',''
+          } else {
+            $v = "1.0"
+          }
+          "APP_VERSION=$v" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          Write-Host "APP_VERSION = $v"
+
+      - name: Build installer with ISCC
+        shell: pwsh
+        run: |
+          & "$env:ISCC" "/DMyAppVersion=$env:APP_VERSION" "packaging\setup.iss"
+          if ($LASTEXITCODE -ne 0) { throw "ISCC 编译失败（退出码 $LASTEXITCODE）" }
+
+      - name: Verify installer
+        shell: pwsh
+        run: |
+          $exe = Get-ChildItem "packaging\output\*.exe" -ErrorAction SilentlyContinue | Select-Object -First 1
+          if (-not $exe) { throw "未找到编译产物 .exe" }
+          Write-Host "产物: $($exe.FullName)"
+          Write-Host "大小: $($exe.Length) 字节 ($([math]::Round($exe.Length/1MB,2)) MB)"
+          Write-Host "SHA256: $((Get-FileHash $exe.FullName -Algorithm SHA256).Hash)"
+          if ($exe.Length -lt 500000) { throw "产物过小，可能编译不完整" }
+
+      - name: Upload installer artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: DrcomAutoLogin-Setup
+          path: packaging/output/*.exe
+          if-no-files-found: error
+
+      - name: Publish Release (tag: installer)
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          $exe = Get-ChildItem "packaging\output\*.exe" | Select-Object -First 1
+          $notes = @"
+          Windows 安装程序（Inno Setup 自动构建）。
+
+          | 项 | 值 |
+          | --- | --- |
+          | 应用版本 | `$env:APP_VERSION` |
+          | 构建提交 | ``${{ github.sha }}`` |
+          | 构建编号 | #${{ github.run_number }} |
+          | 系统要求 | Windows 10/11 x64 + Python 3 |
+
+          安装后会自动注册系统服务、创建桌面与开始菜单快捷方式。
+          首次使用请通过 Web UI（``http://127.0.0.1:8848``）填写账号与密码。
+
+          > 本 Release 每次推送代码后由 CI 自动覆盖更新，下载链接固定不变。
+          "@
+          $tag = "installer"
+          gh release view $tag 2>$null | Out-Null
+          if ($LASTEXITCODE -eq 0) {
+            gh release delete $tag --yes --cleanup-tag
+          }
+          gh release create $tag $exe.FullName --title "Windows 安装程序（自动更新）" --notes $notes --prerelease --target "$env:GITHUB_SHA"
+          gh release view $tag --json url,tagName,name,isPrerelease,assets
