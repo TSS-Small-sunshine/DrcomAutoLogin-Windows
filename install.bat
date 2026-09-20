@@ -3,7 +3,7 @@ chcp 65001 >nul
 setlocal EnableDelayedExpansion
 
 REM ============================================================
-REM   install.bat - Dr.COM 校园网自动登录服务安装脚本 (v2.1)
+REM   install.bat - Dr.COM 校园网自动登录服务安装脚本 (v1.1)
 REM   修复: UTF-8 BOM + chcp 65001（修复 cmd 中文编码问题）
 REM   PowerShell 通过 ASCII 临时 .ps1 文件执行，避开 cmd→ps 编码边界
 REM   含中文路径通过环境变量传递（Unicode 通道）
@@ -34,7 +34,7 @@ set "LOG_DIR=!SCRIPT_DIR!\logs"
 
 echo.
 echo ============================================================
-echo   Dr.COM 校园网自动登录 - Windows 服务安装 (v2.0)
+echo   Dr.COM 校园网自动登录 - Windows 服务安装 (v1.1)
 echo ============================================================
 echo   脚本目录: !SCRIPT_DIR!
 echo ============================================================
@@ -132,16 +132,28 @@ REM ============================================================
 REM ============================================================
 REM   注册服务
 REM ============================================================
-"!NSSM!" install DrcomAutoLogin "!PYTHON!" "!SERVICE_SCRIPT!"
+REM 只传 Application；AppParameters 随后用 reg add 直写（值含引号字符）
+REM 为什么不走 nssm 命令行传参：nssm 会把 AppParameters 原样拼在 Application 之后，
+REM 安装路径含空格时（如 D:\Program Files\...）Windows 会在空格处劈开参数，
+REM Python 只会收到 "D:\Program"，服务反复启动失败。
+"!NSSM!" install DrcomAutoLogin "!PYTHON!"
 if errorlevel 1 (
     echo [ERROR] nssm install 失败
     pause
     exit /b 1
 )
 
+REM 直写 AppParameters：\" 是传给 reg.exe 的转义引号，最终注册表值为 "...\联网_service.py"
+reg add "HKLM\SYSTEM\CurrentControlSet\Services\DrcomAutoLogin\Parameters" /v AppParameters /t REG_SZ /d "\"!SERVICE_SCRIPT!\"" /f >nul
+if errorlevel 1 (
+    echo [ERROR] 写入服务参数 AppParameters 失败
+    pause
+    exit /b 1
+)
+
 "!NSSM!" set DrcomAutoLogin AppDirectory "!SCRIPT_DIR!"
 "!NSSM!" set DrcomAutoLogin DisplayName "Dr.COM 校园网自动登录"
-"!NSSM!" set DrcomAutoLogin Description "Dr.COM 校园网认证 - Web UI 配置版 v2.0"
+"!NSSM!" set DrcomAutoLogin Description "Dr.COM 校园网认证 - Web UI 配置版 v1.1"
 "!NSSM!" set DrcomAutoLogin Start SERVICE_AUTO_START
 "!NSSM!" set DrcomAutoLogin AppStdout "!LOG_DIR!\service_stdout.log"
 "!NSSM!" set DrcomAutoLogin AppStderr "!LOG_DIR!\service_stderr.log"

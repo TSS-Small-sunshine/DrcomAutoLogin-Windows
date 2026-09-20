@@ -1,14 +1,14 @@
 ﻿; ============================================================
 ;   setup.iss - Dr.COM 校园网自动登录 Inno Setup 6 脚本
-;   版本: v2.1
+;   版本: v1.1
 ;   编码: UTF-8 + BOM（ISCC 推荐 UTF-8 BOM）
-;   目标: 生成 DrcomAutoLogin-Setup-v2.1.exe
+;   目标: 生成 DrcomAutoLogin-Setup-v1.1.exe
 ; ============================================================
 
 #define MyAppName "Dr.COM 校园网自动登录"
 ; 允许 CI 用 ISCC /DMyAppVersion=x.y 覆盖；本地直接编译时用下面的默认值
 #ifndef MyAppVersion
-  #define MyAppVersion "2.1"
+  #define MyAppVersion "1.1"
 #endif
 #define MyAppPublisher "Dr.COM AutoLogin"
 #define MyAppExeName "联网_service.py"
@@ -187,10 +187,23 @@ begin
   Exec(NSSM, 'remove DrcomAutoLogin confirm', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
 
   // 注册
-  Exec(NSSM, 'install DrcomAutoLogin "' + PythonPath + '" "' + ScriptPath + '"', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+  // 只传 Application，AppParameters 随后用注册表直写（值含引号字符）。
+  // 为什么不走 nssm 命令行传参：nssm 会把 AppParameters 原样拼在 Application 之后，
+  // 安装路径含空格时（如 D:\Program Files\...）Windows 会在空格处劈开参数，
+  // Python 只会收到 "D:\Program"，服务反复启动失败。
+  Exec(NSSM, 'install DrcomAutoLogin "' + PythonPath + '"', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+  if not RegWriteStringValue(HKEY_LOCAL_MACHINE,
+                             'SYSTEM\CurrentControlSet\Services\DrcomAutoLogin\Parameters',
+                             'AppParameters',
+                             '"' + ScriptPath + '"') then
+  begin
+    MsgBox('注册服务失败：无法写入服务参数 AppParameters。' + #13#10 + #13#10 +
+           '注册表项：HKLM\SYSTEM\CurrentControlSet\Services\DrcomAutoLogin\Parameters' + #13#10 + #13#10 +
+           '请确认以管理员身份运行安装程序后重试。', mbError, MB_OK);
+  end;
   Exec(NSSM, 'set DrcomAutoLogin AppDirectory "' + AppDir + '"', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
   Exec(NSSM, 'set DrcomAutoLogin DisplayName "Dr.COM 校园网自动登录"', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
-  Exec(NSSM, 'set DrcomAutoLogin Description "Dr.COM 校园网认证 - Web UI 配置版 v2.1"', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+  Exec(NSSM, 'set DrcomAutoLogin Description "Dr.COM 校园网认证 - Web UI 配置版 v1.1"', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
   Exec(NSSM, 'set DrcomAutoLogin Start SERVICE_AUTO_START', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
   Exec(NSSM, 'set DrcomAutoLogin AppStdout "' + AppDir + '\logs\service_stdout.log"', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
   Exec(NSSM, 'set DrcomAutoLogin AppStderr "' + AppDir + '\logs\service_stderr.log"', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
