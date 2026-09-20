@@ -71,7 +71,7 @@ ALLOWED_INTERVALS = (5, 15, 30, 60, 120)
 ALLOWED_UPDATE_INTERVALS = (6, 12, 24)
 
 # —— 升级常量 ——
-GITHUB_REPO = "TSS-Small-sunshine/DrcomAutoLogin-Windows"
+GITHUB_REPO = "TSS-Small-sunshine/StardustFlashLink"
 GITHUB_RELEASES_API = "https://api.github.com/repos/{}/releases/latest".format(GITHUB_REPO)
 GITHUB_API_VERSION = "2022-11-28"
 GITHUB_UA = "DrcomAutoLogin-Windows/{}".format(VERSION)
@@ -2576,7 +2576,7 @@ code.path {
 <div class="hint-strip" role="note">
   <span class="hint-strip-icon" aria-hidden="true">✨</span>
   <span class="hint-strip-text">本服务仅监听 127.0.0.1，所有数据保存在本机；密码仅保存到 password.txt。</span>
-  <a class="hint-strip-link" href="https://github.com/TSS-Small-sunshine/DrcomAutoLogin-Windows" target="_blank" rel="noopener noreferrer">查看源码 →</a>
+  <a class="hint-strip-link" href="https://github.com/TSS-Small-sunshine/StardustFlashLink" target="_blank" rel="noopener noreferrer">查看源码 →</a>
 </div>
 
 <main class="wrap" id="main">
@@ -2852,7 +2852,7 @@ code.path {
       </div>
       <div class="link-row">
         <a class="btn btn-secondary" id="about-local" href="http://127.0.0.1:8848" target="_blank" rel="noopener">🖥 本机管理页面</a>
-        <a class="btn" href="https://github.com/TSS-Small-sunshine/DrcomAutoLogin-Windows" target="_blank" rel="noopener noreferrer">📦 在 GitHub 上查看</a>
+        <a class="btn" href="https://github.com/TSS-Small-sunshine/StardustFlashLink" target="_blank" rel="noopener noreferrer">📦 在 GitHub 上查看</a>
       </div>
       <p class="hint" style="margin-top:14px;">
         本页面仅监听本机回环地址（127.0.0.1），局域网内其他设备无法访问；所有配置、密码与日志文件都保存在程序所在的数据目录中，删除目录即彻底清除。

@@ -9,9 +9,9 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/TSS-Small-sunshine/DrcomAutoLogin-Windows/releases/latest"><img src="https://img.shields.io/github/v/release/TSS-Small-sunshine/DrcomAutoLogin-Windows?style=flat-square&label=Release&color=blue" alt="Release"/></a>
-  <a href="https://github.com/TSS-Small-sunshine/DrcomAutoLogin-Windows/blob/main/LICENSE"><img src="https://img.shields.io/github/license/TSS-Small-sunshine/DrcomAutoLogin-Windows?style=flat-square" alt="License"/></a>
-  <a href="https://github.com/TSS-Small-sunshine/DrcomAutoLogin-Windows/stargazers"><img src="https://img.shields.io/github/stars/TSS-Small-sunshine/DrcomAutoLogin-Windows?style=flat-square" alt="Stars"/></a>
+  <a href="https://github.com/TSS-Small-sunshine/StardustFlashLink/releases/latest"><img src="https://img.shields.io/github/v/release/TSS-Small-sunshine/StardustFlashLink?style=flat-square&label=Release&color=blue" alt="Release"/></a>
+  <a href="https://github.com/TSS-Small-sunshine/StardustFlashLink/blob/main/LICENSE"><img src="https://img.shields.io/github/license/TSS-Small-sunshine/StardustFlashLink?style=flat-square" alt="License"/></a>
+  <a href="https://github.com/TSS-Small-sunshine/StardustFlashLink/stargazers"><img src="https://img.shields.io/github/stars/TSS-Small-sunshine/StardustFlashLink?style=flat-square" alt="Stars"/></a>
   <a href="#快速开始"><img src="https://img.shields.io/badge/platform-Windows%2010%2F11-blue?style=flat-square" alt="Platform"/></a>
   <a href="#快速开始"><img src="https://img.shields.io/badge/Python-3.12%20embedded-blueviolet?style=flat-square&logo=python&logoColor=white" alt="Python 3.12 embedded"/></a>
 </p>
@@ -93,9 +93,9 @@
 
 **当前版本**：v2.0.0（2026-09-20） · **状态**：🟢 积极维护
 
-[最新 Release](https://github.com/TSS-Small-sunshine/DrcomAutoLogin-Windows/releases/latest) ·
-[更新日志](https://github.com/TSS-Small-sunshine/DrcomAutoLogin-Windows/releases) ·
-[问题反馈](https://github.com/TSS-Small-sunshine/DrcomAutoLogin-Windows/issues)
+[最新 Release](https://github.com/TSS-Small-sunshine/StardustFlashLink/releases/latest) ·
+[更新日志](https://github.com/TSS-Small-sunshine/StardustFlashLink/releases) ·
+[问题反馈](https://github.com/TSS-Small-sunshine/StardustFlashLink/issues)
 
 ---
 
@@ -258,7 +258,7 @@ DrcomAutoLogin-Windows/
 
 ### 🎯 路径 0：直接下载安装程序（最省事，推荐）
 
-打开 <https://github.com/TSS-Small-sunshine/DrcomAutoLogin-Windows/releases/tag/installer> → 下载 `DrcomAutoLogin-Setup-v*.exe` → 双击安装。
+打开 <https://github.com/TSS-Small-sunshine/StardustFlashLink/releases/tag/installer> → 下载 `DrcomAutoLogin-Setup-v*.exe` → 双击安装。
 
 > 安装包**已内嵌 Python 运行时**，目标机无需预先安装 Python。
 
@@ -289,12 +289,12 @@ DrcomAutoLogin-Windows/
 
 推送代码到 `main` 后，GitHub Actions 会自动在 Windows runner 上用 Inno Setup 构建安装程序：
 
-1. 打开 <https://github.com/TSS-Small-sunshine/DrcomAutoLogin-Windows/actions>
+1. 打开 <https://github.com/TSS-Small-sunshine/StardustFlashLink/actions>
 2. 构建完成后，产物在 `Actions → 对应 run → Artifacts → DrcomAutoLogin-Setup`
 
 也可以直接从 Releases 下载（**每次推送自动覆盖更新，链接固定**）：
 
-<https://github.com/TSS-Small-sunshine/DrcomAutoLogin-Windows/releases/tag/installer>
+<https://github.com/TSS-Small-sunshine/StardustFlashLink/releases/tag/installer>
 
 > CI 流程：安装 Inno Setup 6 → 准备中文语言文件 → 下载 NSSM 到 `tools\` → 下载并解压内嵌 Python 到 `python\` → 用 ISCC 编译 `packaging\setup.iss` → 校验产物 → 上传 artifact → 发布到 tag `installer` 的 Release。
 
