@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-联网_service.py — Dr.COM 校园网自动登录（Web UI 配置版 v1.3.3）
+联网_service.py — Dr.COM 校园网自动登录（Web UI 配置版 v1.3.4）
 
 架构
     主线程：阻塞在 ThreadingHTTPServer 上，提供 Web UI 与 REST API。
@@ -48,7 +48,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 # ============================================================
 # 常量
 # ============================================================
-VERSION = "1.3.3"
+VERSION = "1.3.4"
 BACKOFF_LEVELS = [5, 10, 20, 40, 60]  # 分钟，索引 = 连续失败次数，封顶 60
 
 DEFAULT_CONFIG = {
@@ -1437,32 +1437,60 @@ def api_post_login():
     return 200, {"triggered": True}
 
 
-def api_get_log_tail(offset, max_lines):
+# —— 日志等级正则：从行内提取 [LEVEL] 前缀（用于按等级过滤 / 配色） ——
+_LOG_LEVEL_RE = re.compile(r"\[(DEBUG|INFO|WARNING|ERROR|CRITICAL)\]")
+_VALID_LOG_LEVELS = ("debug", "info", "warning", "error", "critical")
+
+
+def _parse_log_level(line):
+    """从日志行提取等级；不识别返回 None。"""
+    if not isinstance(line, str):
+        return None
+    m = _LOG_LEVEL_RE.search(line)
+    return m.group(1).lower() if m else None
+
+
+def api_get_log_tail(offset, max_lines, level=None):
+    """返回日志尾部。
+
+    level: None/空 = 不过滤；否则必须是 debug/info/warning/error/critical 之一。
+    返回 {"lines": [...], "next_offset": int, "total_size": int, "level_filter": str|None,
+          "error"?: str}；非法 level 通过 raise ValueError 让上层 do_GET 返 400。
+    """
     offset = max(0, int(offset or 0))
     max_lines = max(1, min(int(max_lines or 200), 5000))
+    level_filter = None
+    if level is not None:
+        level_str = str(level).strip().lower()
+        if level_str:
+            if level_str not in _VALID_LOG_LEVELS:
+                raise ValueError("level 必须是 {} 之一".format("/".join(_VALID_LOG_LEVELS)))
+            level_filter = level_str
     if not os.path.isfile(LOG_FILE):
-        return {"lines": [], "next_offset": 0, "total_size": 0}
+        return {"lines": [], "next_offset": 0, "total_size": 0, "level_filter": level_filter}
     total = os.path.getsize(LOG_FILE)
     if offset >= total:
-        return {"lines": [], "next_offset": total, "total_size": total}
+        return {"lines": [], "next_offset": total, "total_size": total, "level_filter": level_filter}
     try:
         with open(LOG_FILE, "rb") as f:
             f.seek(offset)
             data = f.read()
     except OSError as exc:
-        return {"lines": [], "next_offset": offset, "total_size": total, "error": str(exc)}
+        return {"lines": [], "next_offset": offset, "total_size": total, "error": str(exc), "level_filter": level_filter}
     # 拆分行为保留最后 max_lines 行
     try:
         text = data.decode("utf-8", errors="replace")
     except Exception:  # noqa: BLE001
         text = data.decode("latin-1", errors="replace")
     lines = text.splitlines()
+    if level_filter:
+        lines = [ln for ln in lines if _parse_log_level(ln) == level_filter]
     if len(lines) > max_lines:
         lines = lines[-max_lines:]
         next_offset = total  # 已截断，next_offset 标记为文件末尾
     else:
         next_offset = offset + len(data)
-    return {"lines": lines, "next_offset": next_offset, "total_size": total}
+    return {"lines": lines, "next_offset": next_offset, "total_size": total, "level_filter": level_filter}
 
 
 def api_get_log_file_path():
@@ -1732,7 +1760,13 @@ class _Handler(BaseHTTPRequestHandler):
             if path == "/api/log_tail":
                 offset = params.get("offset", "0")
                 maxn = params.get("max", "200")
-                _send_json(self, 200, api_get_log_tail(offset, maxn))
+                level = params.get("level", "")
+                try:
+                    payload = api_get_log_tail(offset, maxn, level)
+                except ValueError as exc:
+                    _send_json(self, 400, {"error": str(exc)})
+                    return
+                _send_json(self, 200, payload)
                 return
             if path == "/api/log_file_path":
                 _send_json(self, 200, api_get_log_file_path())
@@ -2233,6 +2267,30 @@ a:hover { color: var(--primary-strong); }
   font-size: 12px; color: var(--text-muted); margin-top: 12px;
   padding: 10px 14px; background: var(--surface-2); border-radius: var(--radius-sm); border: 1px solid var(--border);
 }
+/* —— 日志等级 chip 筛选 —— */
+.log-level-filter { display: inline-flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+.chip {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 6px 12px; border-radius: var(--radius-pill);
+  border: 1px solid var(--border); background: var(--surface); color: var(--text);
+  font: inherit; font-size: 12.5px; font-weight: 600; line-height: 1.2;
+  cursor: pointer; user-select: none;
+  transition: background-color 0.15s, border-color 0.15s, color 0.15s, box-shadow 0.15s, transform 0.1s;
+}
+.chip:hover { background: var(--surface-2); border-color: var(--primary-soft); }
+.chip:active { transform: translateY(1px); }
+.chip:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
+.chip.chip-active { background: var(--primary); border-color: var(--primary); color: #fff; box-shadow: 0 2px 8px rgba(59, 91, 219, 0.25); }
+.chip-level[data-level="debug"] { color: var(--text-muted); }
+.chip-level[data-level="info"] { color: var(--primary); }
+.chip-level[data-level="warning"] { color: var(--warn); }
+.chip-level[data-level="error"] { color: var(--err); }
+.chip-level[data-level="critical"] { color: var(--err); font-weight: 700; }
+.chip-level.chip-active[data-level="debug"] { background: var(--surface-2); border-color: var(--border); color: var(--text); }
+.chip-level.chip-active[data-level="info"] { background: var(--primary); border-color: var(--primary); color: #fff; }
+.chip-level.chip-active[data-level="warning"] { background: var(--warn); border-color: var(--warn); color: #fff; }
+.chip-level.chip-active[data-level="error"],
+.chip-level.chip-active[data-level="critical"] { background: var(--err); border-color: var(--err); color: #fff; }
 
 /* ============================================================
    9. 关于
@@ -2647,6 +2705,12 @@ code.path {
     <div class="card">
       <div class="log-toolbar">
         <input type="text" class="grow" id="log-filter" placeholder="过滤关键字（留空显示全部）" aria-label="日志关键字过滤" autocomplete="off" spellcheck="false">
+        <div class="log-level-filter" id="log-level-filter" role="group" aria-label="日志等级筛选">
+          <button class="chip chip-level chip-active" data-level="" type="button" aria-pressed="true">全部</button>
+          <button class="chip chip-level" data-level="info" type="button" aria-pressed="false">INFO</button>
+          <button class="chip chip-level" data-level="warning" type="button" aria-pressed="false">WARN</button>
+          <button class="chip chip-level" data-level="error" type="button" aria-pressed="false">ERROR</button>
+        </div>
         <button class="btn btn-secondary" id="btn-log-refresh" type="button">🔄 刷新</button>
         <button class="btn btn-secondary" id="btn-log-download" type="button">⬇ 下载日志</button>
         <label class="switch" for="log-autoscroll">
@@ -2871,8 +2935,10 @@ code.path {
     config: getJson.bind(null, '/api/config'),
     about: getJson.bind(null, '/api/about'),
     logPath: getJson.bind(null, '/api/log_file_path'),
-    logTail: function (offset, max) {
-      return getJson('/api/log_tail?offset=' + offset + '&max=' + max);
+    logTail: function (offset, max, level) {
+      var url = '/api/log_tail?offset=' + encodeURIComponent(offset) + '&max=' + encodeURIComponent(max);
+      if (level) url += '&level=' + encodeURIComponent(level);
+      return getJson(url);
     },
     login: function () { return postJson('/api/login'); },
     saveConfig: function (cfg) { return postJson('/api/config', cfg); },
@@ -3248,6 +3314,7 @@ code.path {
   var logLines = [];
   var logTimer = null;
   var logUpdatedAt = null;
+  var logLevel = '';  /* 当前等级筛选：'' 表示全部 */
 
   function renderLog() {
     var box = $('log-box');
@@ -3269,7 +3336,7 @@ code.path {
   function fetchLog(force) {
     if (document.hidden && !force) return Promise.resolve();
     if (force) { logOffset = 0; logLines = []; }
-    return API.logTail(logOffset, 500).then(function (r) {
+    return API.logTail(logOffset, 500, logLevel).then(function (r) {
       if (!r || typeof r !== 'object') return;
       var incoming = r.lines || [];
       if (incoming.length) {
@@ -3308,6 +3375,24 @@ code.path {
       document.body.removeChild(a);
       toast('已开始下载完整日志', 'info', 2000);
     });
+    /* —— 等级 chip 筛选：切 chip → 重拉（level 不同了 offset 不能再叠加） —— */
+    var group = $('log-level-filter');
+    if (group) {
+      var chips = Array.prototype.slice.call(group.querySelectorAll('.chip-level'));
+      chips.forEach(function (chip) {
+        chip.addEventListener('click', function () {
+          var picked = chip.getAttribute('data-level') || '';
+          if (picked === logLevel) return;
+          chips.forEach(function (c) {
+            var on = c === chip;
+            c.classList.toggle('chip-active', on);
+            c.setAttribute('aria-pressed', on ? 'true' : 'false');
+          });
+          logLevel = picked;
+          reloadLog();
+        });
+      });
+    }
   }
 
   function startLogPolling() {
