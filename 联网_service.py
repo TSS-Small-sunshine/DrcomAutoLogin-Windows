@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-联网_service.py — Dr.COM 校园网自动登录（Web UI 配置版 v1.3.2）
+联网_service.py — Dr.COM 校园网自动登录（Web UI 配置版 v1.3.3）
 
 架构
     主线程：阻塞在 ThreadingHTTPServer 上，提供 Web UI 与 REST API。
@@ -48,7 +48,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 # ============================================================
 # 常量
 # ============================================================
-VERSION = "1.3.2"
+VERSION = "1.3.3"
 BACKOFF_LEVELS = [5, 10, 20, 40, 60]  # 分钟，索引 = 连续失败次数，封顶 60
 
 DEFAULT_CONFIG = {
@@ -1587,6 +1587,100 @@ def api_get_update_history():
 
 
 # ============================================================
+# 配置导入/导出（zip）
+# ============================================================
+def _build_config_export_zip():
+    """把当前 config.json + password.txt（如有）+ manifest.json 打包成 bytes。"""
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, 'w', zipfile.ZIP_DEFLATED) as zf:
+        manifest = {
+            "schema_version": CONFIG_EXPORT_SCHEMA_VERSION,
+            "exported_at": _now_iso(),
+            "service_version": VERSION,
+            "tool": CONFIG_EXPORT_TOOL,
+        }
+        zf.writestr("manifest.json", json.dumps(manifest, ensure_ascii=False, indent=2))
+        config_path = os.path.join(BASE_DIR, "config.json")
+        if os.path.isfile(config_path):
+            with open(config_path, "rb") as f:
+                zf.writestr("config.json", f.read())
+        pwd_path = os.path.join(BASE_DIR, "password.txt")
+        if os.path.isfile(pwd_path):
+            with open(pwd_path, "rb") as f:
+                zf.writestr("password.txt", f.read())
+    return buf.getvalue()
+
+
+def api_get_config_export(handler):
+    """GET /api/config/export — 导出 zip。"""
+    try:
+        data = _build_config_export_zip()
+    except (OSError, zipfile.BadZipFile) as exc:
+        logger.exception("config export failed: %s", exc)
+        _send_json(handler, 500, {"ok": False, "error": "export failed: {}".format(exc)})
+        return
+    ts = datetime.now().strftime("%Y%m%d-%H%M%S")
+    fname = "config-export-{}.zip".format(ts)
+    _send_bytes(handler, 200, "application/zip", data, filename=fname)
+
+
+def api_post_config_import(handler):
+    """POST /api/config/import — 上传 zip 应用配置。"""
+    try:
+        length = int(handler.headers.get("Content-Length", "0") or "0")
+    except ValueError:
+        length = 0
+    if length <= 0:
+        _send_json(handler, 400, {"ok": False, "error": "empty body"})
+        return
+    if length > CONFIG_IMPORT_MAX_BYTES:
+        _send_json(handler, 413, {"ok": False, "error": "body too large (>{} bytes)".format(CONFIG_IMPORT_MAX_BYTES)})
+        return
+    raw = handler.rfile.read(length)
+    if not raw:
+        _send_json(handler, 400, {"ok": False, "error": "empty body"})
+        return
+    applied = []
+    try:
+        with zipfile.ZipFile(io.BytesIO(raw)) as zf:
+            names = set(zf.namelist())
+            if "manifest.json" not in names:
+                _send_json(handler, 400, {"ok": False, "error": "missing manifest.json"})
+                return
+            manifest = json.loads(zf.read("manifest.json").decode("utf-8"))
+            if int(manifest.get("schema_version", -1)) != CONFIG_EXPORT_SCHEMA_VERSION:
+                _send_json(handler, 400, {"ok": False, "error": "unsupported schema_version: {}".format(manifest.get("schema_version"))})
+                return
+            if "config.json" not in names:
+                _send_json(handler, 400, {"ok": False, "error": "missing config.json"})
+                return
+            cfg_text = zf.read("config.json").decode("utf-8")
+            cfg_data = json.loads(cfg_text)
+            errors = _validate_config(cfg_data)
+            if errors:
+                _send_json(handler, 400, {"ok": False, "error": "config 校验失败: " + "; ".join(errors)})
+                return
+            _save_config(cfg_data)
+            applied.append("config")
+            if "password.txt" in names:
+                pwd_bytes = zf.read("password.txt")
+                if pwd_bytes.strip():
+                    pwd_path = os.path.join(BASE_DIR, "password.txt")
+                    tmp = pwd_path + ".tmp"
+                    with open(tmp, "wb") as f:
+                        f.write(pwd_bytes)
+                    os.replace(tmp, pwd_path)
+                    applied.append("password")
+                else:
+                    logger.warning("import password.txt is empty, skipped")
+    except (zipfile.BadZipFile, json.JSONDecodeError, UnicodeDecodeError, OSError) as exc:
+        logger.exception("config import failed: %s", exc)
+        _send_json(handler, 400, {"ok": False, "error": "import failed: {}".format(exc)})
+        return
+    _send_json(handler, 200, {"ok": True, "applied": applied, "need_restart": True})
+
+
+# ============================================================
 # HTTP Handler
 # ============================================================
 class _Handler(BaseHTTPRequestHandler):
@@ -1663,6 +1757,10 @@ class _Handler(BaseHTTPRequestHandler):
             if path == "/api/update/history":
                 _send_json(self, 200, api_get_update_history())
                 return
+            # —— 配置导入/导出（zip）——
+            if path == "/api/config/export":
+                api_get_config_export(self)
+                return
             _send_json(self, 404, {"error": "not found"})
         except Exception as exc:  # noqa: BLE001
             logger.exception("GET %s 异常: %s", path, exc)
@@ -1670,6 +1768,14 @@ class _Handler(BaseHTTPRequestHandler):
 
     def do_POST(self):
         path, _params = self._parse_url()
+        # —— 二进制上传（zip）在 JSON 解析之前专路分发 —— 现有 JSON 类端点行为零变更
+        if path == "/api/config/import":
+            try:
+                api_post_config_import(self)
+            except Exception as exc:  # noqa: BLE001
+                logger.exception("POST %s 异常: %s", path, exc)
+                _send_json(self, 500, {"ok": False, "error": "internal: {}".format(exc)})
+            return
         try:
             length = int(self.headers.get("Content-Length", "0") or "0")
         except ValueError:
@@ -2103,6 +2209,9 @@ a:hover { color: var(--primary-strong); }
 }
 .save-bar .muted { margin-right: auto; font-size: 13px; }
 
+/* —— 配置导入导出按钮行 —— */
+.config-io-row { display: flex; gap: 12px; margin: 16px 0; flex-wrap: wrap; }
+
 /* ============================================================
    8. 日志终端
    ============================================================ */
@@ -2519,6 +2628,12 @@ code.path {
         <div class="hint">取值 1024-65535，仅监听 127.0.0.1，默认 8848</div>
         <div class="err" id="err-ui-port" role="alert"></div>
       </div>
+    </div>
+
+    <div class="config-io-row">
+      <button class="btn btn-secondary" id="btn-config-export" type="button">📤 导出配置</button>
+      <button class="btn btn-secondary" id="btn-config-import" type="button">📥 导入配置</button>
+      <input type="file" id="config-import-file" accept=".zip" style="display:none">
     </div>
 
     <div class="save-bar">
@@ -3497,6 +3612,36 @@ code.path {
     cfg.update_min_free_disk_mb = (typeof disk === 'number' && !isNaN(disk) && disk >= 50 && disk <= 10240) ? disk : 200;
     return cfg;
   };
+
+  // —— 配置导入导出 ——
+  (function () {
+    var exportBtn = $('btn-config-export');
+    if (exportBtn) exportBtn.addEventListener('click', function () {
+      window.location.href = '/api/config/export';
+    });
+    var importBtn = $('btn-config-import');
+    var fileInput = $('config-import-file');
+    if (importBtn && fileInput) {
+      importBtn.addEventListener('click', function () { fileInput.click(); });
+      fileInput.addEventListener('change', function () {
+        var f = fileInput.files && fileInput.files[0];
+        if (!f) return;
+        toast('正在导入配置...', 'warn', 4000);
+        fetch('/api/config/import', { method: 'POST', body: f })
+          .then(function (r) { return r.json().then(function (b) { return { ok: r.ok, body: b }; }); })
+          .then(function (r) {
+            if (r.ok && r.body && r.body.ok) {
+              var applied = (r.body.applied || []).join(', ');
+              toast('导入成功（' + applied + '）。需重启服务生效。', 'success', 6000);
+            } else {
+              toast('导入失败: ' + ((r.body && r.body.error) || '未知错误'), 'error', 6000);
+            }
+          })
+          .catch(function () { toast('请求失败，请检查服务状态', 'error', 6000); })
+          .then(function () { fileInput.value = ''; });
+      });
+    }
+  })();
 
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot);
   else boot();
