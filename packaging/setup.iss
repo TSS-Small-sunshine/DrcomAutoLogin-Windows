@@ -65,6 +65,10 @@ Filename: "{cmd}"; Parameters: "/c ""{app}\tools\nssm.exe"" remove DrcomAutoLogi
 
 [Code]
 
+const
+  // WaitServiceStopped 轮询间隔（毫秒）；也用作超时计算的除数
+  PollIntervalMs = 500;
+
 // ============================================================
 //   GetPythonPath - 探测可用的 Python 解释器
 //   优先返回安装包内嵌的 Python 运行时（{app}\python\python.exe）；
@@ -234,8 +238,6 @@ end;
 //             超时用迭代次数（TimeoutMs ÷ 500ms）控制，避免依赖 GetTickCount。
 // ============================================================
 procedure WaitServiceStopped(const SvcName: string; TimeoutMs: Integer);
-const
-  PollIntervalMs = 500;
 var
   NSSM: string;
   Iterations: Integer;
