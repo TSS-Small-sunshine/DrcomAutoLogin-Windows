@@ -225,26 +225,30 @@ end;
 //   用途：在 CurStepChanged(ssInstall) 调 nssm stop 之后再调，
 //         最长等待 TimeoutMs 毫秒。超时未停会弹 MsgBox 提示用户。
 //
-//   实现说明：Inno Setup 6 内置函数里没有 QueryServiceStatus，
+//   实现说明：Inno Setup 6 没有 QueryServiceStatus / GetTickCount builtin，
 //             因此用 nssm stop 的退出码做轮询：
 //             - 服务已停止（ERROR_SERVICE_NOT_ACTIVE）→ nssm 退出码 0
 //             - 服务仍在停止中或调用失败                  → nssm 退出码 1
 //             每隔 500ms 再调一次 nssm stop，直到它返回 0 或超时。
 //             单次 nssm stop 内部最多轮询 ~2.75s（10 次递增 sleep）。
+//             超时用迭代次数（TimeoutMs ÷ 500ms）控制，避免依赖 GetTickCount。
 // ============================================================
 procedure WaitServiceStopped(const SvcName: string; TimeoutMs: Integer);
+const
+  PollIntervalMs = 500;
 var
   NSSM: string;
-  Deadline: DWORD;
+  Iterations: Integer;
   ResultCode: Integer;
 begin
   NSSM := ExpandConstant('{app}') + '\tools\nssm.exe';
-  Deadline := GetTickCount + DWORD(TimeoutMs);
-  while GetTickCount < Deadline do
+  Iterations := TimeoutMs div PollIntervalMs;
+  while Iterations > 0 do
   begin
     Exec(NSSM, 'stop ' + SvcName, '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
     if ResultCode = 0 then Exit; // 已停止
-    Sleep(500);
+    Sleep(PollIntervalMs);
+    Iterations := Iterations - 1;
   end;
   // 超时未停：提示用户，但不阻断安装（让用户至少能把新文件复制上去）
   MsgBox('服务未在 30 秒内停止，安装可能失败。建议先手动停止服务再重试安装。',
