@@ -1,6 +1,43 @@
 # 星尘闪连 (Stardust Flash Link) — Dr.COM 校园网自动登录（Windows 版）
 
+<p align="center">
+  <img src="packaging/branding/app.ico" alt="Logo" width="80"/>
+</p>
+
+<p align="center">
+  <b>星尘闪连 (Stardust Flash Link)</b> · Windows 校园网自动登录
+</p>
+
+<p align="center">
+  <a href="https://github.com/TSS-Small-sunshine/DrcomAutoLogin-Windows/releases/latest"><img src="https://img.shields.io/github/v/release/TSS-Small-sunshine/DrcomAutoLogin-Windows?style=flat-square&label=Release&color=blue" alt="Release"/></a>
+  <a href="https://github.com/TSS-Small-sunshine/DrcomAutoLogin-Windows/blob/main/LICENSE"><img src="https://img.shields.io/github/license/TSS-Small-sunshine/DrcomAutoLogin-Windows?style=flat-square" alt="License"/></a>
+  <a href="https://github.com/TSS-Small-sunshine/DrcomAutoLogin-Windows/stargazers"><img src="https://img.shields.io/github/stars/TSS-Small-sunshine/DrcomAutoLogin-Windows?style=flat-square" alt="Stars"/></a>
+  <a href="#快速开始"><img src="https://img.shields.io/badge/platform-Windows%2010%2F11-blue?style=flat-square" alt="Platform"/></a>
+  <a href="#快速开始"><img src="https://img.shields.io/badge/Python-3.12-embedded-blueviolet?style=flat-square&logo=python&logoColor=white" alt="Python Embedded"/></a>
+</p>
+
 Windows 版校园网认证网关自动登录工具：开机自启 + 周期自检 + 智能离线识别 + Web UI 图形化配置。
+
+## 📑 目录
+
+- [⚠️ 适用范围声明](#适用范围声明请先读这里)
+- [✨ 功能特性](#功能特性)
+- [📸 截图](#截图)
+- [🏷 项目状态](#项目状态)
+- [🛠 技术栈](#技术栈)
+- [🧩 架构说明](#架构说明)
+- [🔐 认证协议](#认证协议)
+- [📂 目录结构](#目录结构)
+- [🚀 快速开始](#快速开始)
+- [🤖 自动构建（GitHub Actions）](#自动构建github-actions)
+- [🖥 Web UI 说明](#web-ui-说明)
+- [⚙️ 配置文件说明](#配置文件说明)
+- [❓ 常见问题](#常见问题)
+- [🔒 安全说明](#安全说明)
+- [⚖️ 免责声明](#免责声明)
+- [📜 许可证](#许可证)
+- [📚 文档索引](#文档索引)
+- [📝 版本记录](#版本记录)
 
 ---
 
@@ -30,6 +67,33 @@ Windows 版校园网认证网关自动登录工具：开机自启 + 周期自检
 - **零第三方 Python 依赖**：全部使用 Python 标准库，受限网络环境也能跑
 - **一键安装 / 一键卸载**：`install.bat` / `uninstall.bat` 全程自动
 - **可选打包安装程序**：用 Inno Setup 6 打成 `.exe` 安装向导（`packaging\build.bat`）
+
+---
+
+## 📸 截图
+
+> ⚠️ 截图占位 — 用户后续会提供背景图后补上。
+
+- 安装向导
+- Web UI 主界面
+- 配置面板
+
+<!-- 后续会加入：
+<p align="center">
+  <img src="docs/screenshot-install.png" alt="安装向导" width="600"/>
+  <img src="docs/screenshot-webui.png" alt="Web UI" width="600"/>
+</p>
+-->
+
+---
+
+## 🏷 项目状态
+
+**当前版本**：v1.4.0（2026-09-20） · **状态**：🟢 积极维护
+
+[最新 Release](https://github.com/TSS-Small-sunshine/DrcomAutoLogin-Windows/releases/latest) ·
+[更新日志](https://github.com/TSS-Small-sunshine/DrcomAutoLogin-Windows/releases) ·
+[问题反馈](https://github.com/TSS-Small-sunshine/DrcomAutoLogin-Windows/issues)
 
 ---
 
@@ -190,13 +254,13 @@ DrcomAutoLogin-Windows/
 
 ## 快速开始
 
-### 路径 0：直接下载安装程序（最省事，推荐）
+### 🎯 路径 0：直接下载安装程序（最省事，推荐）
 
 打开 <https://github.com/TSS-Small-sunshine/DrcomAutoLogin-Windows/releases/tag/installer> → 下载 `DrcomAutoLogin-Setup-v*.exe` → 双击安装。
 
 > 安装包**已内嵌 Python 运行时**，目标机无需预先安装 Python。
 
-### 路径 A：一键安装（源码方式）
+### 🪜 路径 A：一键安装（源码方式）
 
 > 此方式需要本机已安装 Python 3（安装包方式不需要）。
 
@@ -210,7 +274,7 @@ DrcomAutoLogin-Windows/
 5. 在「配置」标签页填入**账号**，选择**运营商后缀**，点「修改密码」设置密码，最后点「💾 保存配置」
 6. 回到「状态」标签页点「🔄 立即登录」验证；成功后开机将自动登录
 
-### 路径 B：打包成安装程序（可选）
+### 📦 路径 B：打包成安装程序（可选）
 
 1. 安装 **Inno Setup 6**（`build.bat` 会检测，缺失时可自动下载安装）
 2. 双击运行 `packaging\build.bat`（会自动准备 NSSM 并调用 `ISCC.exe` 编译）
@@ -307,13 +371,20 @@ Web UI →「配置」标签页 → 点「修改密码」→ 输入新密码保�
 
 ---
 
+## 📜 许可证
+
+本项目以 **MIT 许可证**开源 — 详见 [LICENSE](LICENSE) 文件。
+
+附加：安装包内置了 [用户协议 (EULA)](packaging/branding/EULA.rtf)，安装时会要求勾选同意。
+
+---
+
 ## 文档索引
 
 | 文档 | 内容 |
 | --- | --- |
 | 本 `README.md` | 功能、架构、协议、快速开始、常见问题 |
 | [`packaging/README.md`](packaging/README.md) | 开发者构建安装包的步骤、终端用户安装 / 卸载流程、安装包目录结构、已知限制 |
-| [`LICENSE`](LICENSE) | MIT 许可证 |
 
 ---
 

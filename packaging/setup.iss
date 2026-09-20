@@ -17,6 +17,7 @@
 AppName={#MyAppName}
 AppVersion={#MyAppVersion}
 AppPublisher={#MyAppPublisher}
+LicenseFile=branding\EULA.rtf
 DefaultDirName={autopf}\DrcomAutoLogin
 DisableProgramGroupPage=yes
 PrivilegesRequired=admin
