@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-联网_service.py — Dr.COM 校园网自动登录（Web UI 配置版 v1.3.4）
+联网_service.py — Dr.COM 校园网自动登录（Web UI 配置版 v1.3.5）
 
 架构
     主线程：阻塞在 ThreadingHTTPServer 上，提供 Web UI 与 REST API。
@@ -48,7 +48,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 # ============================================================
 # 常量
 # ============================================================
-VERSION = "1.3.4"
+VERSION = "1.3.5"
 BACKOFF_LEVELS = [5, 10, 20, 40, 60]  # 分钟，索引 = 连续失败次数，封顶 60
 
 DEFAULT_CONFIG = {
@@ -85,6 +85,23 @@ SERVICE_NAME = "DrcomAutoLogin"
 UPGRADE_HISTORY_MAX_LINES = 50
 UPGRADE_SUCCESS_TTL_SEC = 5 * 60  # 成功后绿 banner 仅保留 5 分钟
 BACKUP_RETENTION_DAYS = 7
+
+# GitHub 镜像（国内加速；首个 None 表示主源，按顺序 fallback）
+# 镜像格式：prefix + 原始 URL；原始 URL 必须是 https://... 开头以避免双斜杠。
+GITHUB_API_MIRRORS = (
+    None,                    # 主源 api.github.com
+    "https://gh-proxy.com",
+    "https://ghfast.top",
+    "https://mirror.ghproxy.com",
+)
+GITHUB_DOWNLOAD_MIRRORS = (
+    None,                    # 主源 objects.githubusercontent.com / github.com
+    "https://gh-proxy.com",
+    "https://ghfast.top",
+    "https://mirror.ghproxy.com",
+)
+GITHUB_API_REQUEST_TIMEOUT_SEC = 15  # 镜像 fallback 时单次超时
+GITHUB_DOWNLOAD_REQUEST_TIMEOUT_SEC = 60  # 镜像 fallback 时下载单段超时
 
 # —— 配置导入/导出（zip）——
 CONFIG_EXPORT_SCHEMA_VERSION = 1
@@ -784,57 +801,71 @@ def _check_disk_free_mb():
 
 
 def _check_github_latest():
-    """调用 GitHub releases/latest API。
-    返回 (version, asset_url, digest, size, published_at) 元组；失败返回 None。
+    """依次尝试 GitHub 主源 + 镜像拉 releases/latest API。
+
+    返回 (version, asset_url, digest, size, published_at) 元组；全部失败返回 None。
     digest 形如 "sha256:abcd..."，已剥掉前缀。
+    主源超时/失败时 fallback 到下一个镜像。
     """
-    try:
-        req = urllib.request.Request(
-            GITHUB_RELEASES_API,
-            headers={
-                "User-Agent": GITHUB_UA,
-                "Accept": "application/vnd.github+json",
-                "X-GitHub-Api-Version": GITHUB_API_VERSION,
-            },
-        )
-        with urllib.request.urlopen(req, timeout=HTTP_TIMEOUT_SEC) as resp:
-            raw = resp.read().decode("utf-8", errors="replace")
-    except (urllib.error.URLError, OSError, TimeoutError) as exc:
-        logger.warning("GitHub releases/latest 不可达: %s", exc)
-        return None
-    try:
-        data = json.loads(raw)
-    except (ValueError, json.JSONDecodeError) as exc:
-        logger.warning("GitHub API JSON 解析失败: %s", exc)
-        return None
-    if not isinstance(data, dict):
-        return None
-    tag = data.get("tag_name")
-    if not isinstance(tag, str) or not tag:
-        return None
-    version = tag.strip().lstrip("v").lstrip("V")
-    assets = data.get("assets") or []
-    asset_url = None
-    digest = None
-    size = None
-    if isinstance(assets, list):
-        for a in assets:
-            if not isinstance(a, dict):
-                continue
-            name = a.get("name") or ""
-            if isinstance(name, str) and name.lower().endswith(".exe"):
-                asset_url = a.get("browser_download_url")
-                d = a.get("digest") or ""
-                if isinstance(d, str) and d.startswith("sha256:"):
-                    digest = d.split(":", 1)[1]
-                s = a.get("size")
-                if isinstance(s, int):
-                    size = s
-                break
-    if not asset_url:
-        return None
-    published = data.get("published_at")
-    return version, asset_url, digest, size, published
+    primary_url = GITHUB_RELEASES_API
+    for mirror in GITHUB_API_MIRRORS:
+        target = primary_url if mirror is None else mirror.rstrip("/") + "/" + primary_url
+        try:
+            req = urllib.request.Request(
+                target,
+                headers={
+                    "User-Agent": GITHUB_UA,
+                    "Accept": "application/vnd.github+json",
+                    "X-GitHub-Api-Version": GITHUB_API_VERSION,
+                },
+            )
+            timeout = HTTP_TIMEOUT_SEC if mirror is None else GITHUB_API_REQUEST_TIMEOUT_SEC
+            with urllib.request.urlopen(req, timeout=timeout) as resp:
+                raw = resp.read().decode("utf-8", errors="replace")
+        except (urllib.error.URLError, OSError, TimeoutError) as exc:
+            logger.warning(
+                "GitHub 检查镜像 %s 失败: %s",
+                "primary" if mirror is None else mirror,
+                exc,
+            )
+            continue
+        try:
+            data = json.loads(raw)
+        except (ValueError, json.JSONDecodeError) as exc:
+            logger.warning("GitHub API JSON 解析失败 (%s): %s", target, exc)
+            continue
+        if not isinstance(data, dict):
+            logger.warning("GitHub API 返回非 dict: %s", target)
+            continue
+        tag = data.get("tag_name")
+        if not isinstance(tag, str) or not tag:
+            logger.warning("GitHub API 返回无 tag_name: %s", target)
+            continue
+        version = tag.strip().lstrip("v").lstrip("V")
+        assets = data.get("assets") or []
+        asset_url = None
+        digest = None
+        size = None
+        if isinstance(assets, list):
+            for a in assets:
+                if not isinstance(a, dict):
+                    continue
+                name = a.get("name") or ""
+                if isinstance(name, str) and name.lower().endswith(".exe"):
+                    asset_url = a.get("browser_download_url")
+                    d = a.get("digest") or ""
+                    if isinstance(d, str) and d.startswith("sha256:"):
+                        digest = d.split(":", 1)[1]
+                    s = a.get("size")
+                    if isinstance(s, int):
+                        size = s
+                    break
+        if not asset_url:
+            logger.warning("GitHub API 返回无 .exe asset: %s", target)
+            continue
+        published = data.get("published_at")
+        return version, asset_url, digest, size, published
+    return None
 
 
 def _set_update_state(**kwargs):
@@ -870,9 +901,35 @@ def _release_update_lock():
 
 
 def _download_installer(url, dest_path, expected_size, progress_callback=None):
-    """流式下载安装器到本地。返回写入字节数或抛异常。
+    """按顺序尝试主源 + 镜像下载 installer；任一成功即返回字节数。
+    所有镜像都失败则抛最后一次异常。
 
     progress_callback(downloaded_bytes, total_bytes_or_None) 每 ~200ms 触发。
+    """
+    primary_url = url
+    last_exc = None
+    for mirror in GITHUB_DOWNLOAD_MIRRORS:
+        target = primary_url if mirror is None else mirror.rstrip("/") + "/" + primary_url
+        try:
+            return _do_download_installer(
+                target, dest_path, expected_size, progress_callback,
+                timeout=DOWNLOAD_TIMEOUT_SEC if mirror is None else GITHUB_DOWNLOAD_REQUEST_TIMEOUT_SEC,
+            )
+        except (urllib.error.URLError, OSError, TimeoutError) as exc:
+            logger.warning(
+                "下载镜像 %s 失败: %s",
+                "primary" if mirror is None else mirror,
+                exc,
+            )
+            last_exc = exc
+            continue
+    raise last_exc if last_exc is not None else OSError("所有下载镜像都失败")
+
+
+def _do_download_installer(url, dest_path, expected_size, progress_callback, timeout):
+    """单镜像流式下载（_download_installer 的实际下载实现）。
+
+    成功返回写入字节数；失败抛 (URLError / OSError / TimeoutError)。
     """
     last_report = [0.0]
     last_bytes = [0]
@@ -882,7 +939,7 @@ def _download_installer(url, dest_path, expected_size, progress_callback=None):
             url,
             headers={"User-Agent": GITHUB_UA, "Accept": "application/octet-stream"},
         )
-        with urllib.request.urlopen(req, timeout=DOWNLOAD_TIMEOUT_SEC) as resp:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
             total_header = resp.headers.get("Content-Length")
             total = int(total_header) if (total_header and total_header.isdigit()) else None
             tmp = dest_path + ".part"
@@ -2673,6 +2730,14 @@ code.path {
         <input type="number" id="cfg-update-disk" class="cfg-lg" min="50" max="10240" step="1" inputmode="numeric">
         <div class="hint">下载安装包前要求磁盘剩余 ≥ 此值（50-10240 MB，默认 200）</div>
       </div>
+      <div class="field">
+        <div class="hint" style="margin-bottom:8px;">手动触发</div>
+        <div style="display:flex; gap:8px; flex-wrap:wrap;">
+          <button class="btn btn-secondary" id="btn-update-check-now" type="button">🔍 立即检查更新</button>
+          <button class="btn btn-secondary" id="btn-update-install-now" type="button">⬆️ 立即升级</button>
+        </div>
+        <div class="hint" style="margin-top:6px;">点「立即检查更新」拉 GitHub；发现新版再点「立即升级」（升级前自动停服务，约 30-60 秒）</div>
+      </div>
     </div>
 
     <div class="card section">
@@ -3726,6 +3791,40 @@ code.path {
           .then(function () { fileInput.value = ''; });
       });
     }
+  })();
+
+  // —— 手动触发更新（v1.3.5 新增）——
+  // 复用 /api/update/check 与 /api/update/install 端点（v1.3 已有）。
+  (function () {
+    var checkBtn = $('btn-update-check-now');
+    var installBtn = $('btn-update-install-now');
+    if (checkBtn) checkBtn.addEventListener('click', function () {
+      toast('正在检查 GitHub 最新版本...', 'warn');
+      postUpdateJson('/api/update/check')
+        .then(function (data) {
+          if (data && data.ok) {
+            toast('检查完成：' + (data.message || 'OK'), 'success', 4000);
+          } else {
+            toast('检查失败: ' + ((data && data.error) || '未知错误'), 'error', 6000);
+          }
+          if (typeof pollUpdate === 'function') pollUpdate();
+        })
+        .catch(function () { toast('请求失败，请检查服务状态', 'error'); });
+    });
+    if (installBtn) installBtn.addEventListener('click', function () {
+      if (!confirm('确认立即升级？\n\n升级期间（约 30-60 秒）：\n- 服务会短暂停止\n- Web UI 不可用\n- 进度通过升级状态横幅实时显示\n\n继续？')) return;
+      toast('正在触发升级...', 'warn', 4000);
+      postUpdateJson('/api/update/install')
+        .then(function (data) {
+          if (data && data.ok) {
+            toast('升级已启动，请稍候（约 60 秒）', 'success', 6000);
+          } else {
+            toast('升级启动失败: ' + ((data && data.error) || '未知错误'), 'error', 6000);
+          }
+          if (typeof pollUpdate === 'function') pollUpdate();
+        })
+        .catch(function () { toast('请求失败', 'error'); });
+    });
   })();
 
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot);

@@ -214,7 +214,7 @@ DrcomAutoLogin-Windows/
 
 1. 安装 **Inno Setup 6**（`build.bat` 会检测，缺失时可自动下载安装）
 2. 双击运行 `packaging\build.bat`（会自动准备 NSSM 并调用 `ISCC.exe` 编译）
-3. 构建产物：`packaging\output\DrcomAutoLogin-Setup-v1.3.4.exe`
+3. 构建产物：`packaging\output\DrcomAutoLogin-Setup-v1.3.5.exe`
 4. 把该 `.exe` 发给用户，双击即按向导安装（可勾选「创建桌面快捷方式」「安装后立即启动服务」）
 
 ---
@@ -328,10 +328,11 @@ Web UI →「配置」标签页 → 点「修改密码」→ 输入新密码保�
 | **v1.3.1** | 修复 v1.3 引入的**前后端字段没收口**问题 —— `_save_config` 在校验前 merge 默认值（兜底），老 config.json 缺 `update_min_free_disk_mb` 等 v1.3 字段时不再报错；Web UI 自动升级 card 增加「下载前最小剩余磁盘」输入框。同时修复**版本比较 bug**：`_parse_version` 不识别 `-fix` / `-rc1` 等非数字后缀，`_parse_version("1.3-fix")` 与 `1.3` 比较时错误地返回 0（"已是最新"），导致 v1.3 服务无法识别并升级到 `v1.3-fix` / `v1.3.1`；重写解析逻辑，遇非数字后缀追加 sentinel `999`，使 hotfix 版本严格大于同主版本号。 |
 | **v1.3.2** | 修复 v1.3.1 自动升级流程的**两个关键 bug**：(1) `_launch_installer` 启动 installer 时**未用 `DETACHED_PROCESS` flag** —— installer 进程继承父 Python 的 console handle + process group，Python 被 NSSM 杀掉时 installer 被**连带杀掉**，升级半途而废。修复：用 `DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP | CREATE_BREAKAWAY_FROM_JOB` 让 installer 完全脱离父进程生命周期；`_do_update_now` 步骤 10 改用 `os._exit(0)` 立即退出，不调 `subprocess.run(nssm stop)`（之前那种调用会触发恶性循环）。(2) 升级期间 `_set_nssm_appexit("Disabled")` 写了一个**NSSM 非法值**（AppExit 合法值只有 `Default | Exit | Success | Failure | Codes`），导致升级后服务无法启动（`nssm start` 报 `OpenService 0x424`，`sc start` 报 `Access is denied`）。修复：升级透明策略 —— 不再写 AppExit，保留用户原值，升级完由 `_post_upgrade_startup` 钩子做幂等恢复。 |
 | **v1.3.3** | 新增**配置导入/导出**：Web UI「配置」面板新增「📤 导出配置」和「📥 导入配置」两个按钮。导出把 `config.json` + `password.txt`（如有）+ `manifest.json` 打包成 `config-export-<时间戳>.zip` 下载；导入上传 zip 后做合法性校验（manifest schema_version、config 字段校验、password 非空），通过后原子写入磁盘并返回 `{need_restart: true}`，由用户手动点「重启服务」按钮应用新配置。**纯标准库实现**（`zipfile` + `io`），不引入新依赖。`POST /api/config/import` 路由必须放在 JSON 解析**之前**分发（zip 是二进制 body 会被现有 `json.loads` 拦截）。 |
-| **v1.3.4** | 当前版本。**日志分级**：Web UI「日志」面板顶部新增等级筛选 chip（全部 / INFO / WARN / ERROR），后端 `GET /api/log_tail` 新增可选 `level` query 参数（`info` / `warning` / `error` / `debug` / `critical`），按等级过滤返回行。响应体新增 `level_filter` 字段（向后兼容：旧客户端忽略未知字段）。无效 level 返回 400。**保持单文件日志**（不拆多个 log 文件），通过前端 chip 切换实现产品级「按等级筛选」体验。 |
+| **v1.3.4** | **日志分级**：Web UI「日志」面板顶部新增等级筛选 chip（全部 / INFO / WARN / ERROR），后端 `GET /api/log_tail` 新增可选 `level` query 参数（`info` / `warning` / `error` / `debug` / `critical`），按等级过滤返回行。响应体新增 `level_filter` 字段（向后兼容：旧客户端忽略未知字段）。无效 level 返回 400。**保持单文件日志**（不拆多个 log 文件），通过前端 chip 切换实现产品级「按等级筛选」体验。 |
+| **v1.3.5** | 当前版本。**GitHub 国内镜像加速** + **手动触发更新**：(1) `_check_github_latest` 和 `_download_installer` 按 `GITHUB_API_MIRRORS` 列表（`None` 主源 + `https://gh-proxy.com` / `ghfast.top` / `mirror.ghproxy.com` 三个镜像）串行 fallback；主源超时/失败时自动尝试镜像，避免国内用户机器上 `api.github.com` 不可达导致自动升级静默失效。(2) Web UI「配置」面板「自动化」card 末尾新增「🔍 立即检查更新」和「⬆️ 立即升级」两个按钮，调用 v1.3 已有的 `/api/update/check` 和 `/api/update/install` 端点（零新增 API），升级按钮带 confirm 确认对话框。 |
 
-> **版本号说明**：本项目统一使用 `1.x` 公开版本线，**当前版本为 `1.3.4`**。
-> - `联网_service.py` 的 `VERSION` 常量（显示在日志与「关于」页）、Inno Setup 安装包版本、安装 / 卸载脚本与构建脚本中的版本字样，**全部是同一个 `1.3.4`**，不再存在多套并存的编号；
+> **版本号说明**：本项目统一使用 `1.x` 公开版本线，**当前版本为 `1.3.5`**。
+> - `联网_service.py` 的 `VERSION` 常量（显示在日志与「关于」页）、Inno Setup 安装包版本、安装 / 卸载脚本与构建脚本中的版本字样，**全部是同一个 `1.3.5`**，不再存在多套并存的编号；
 > - 历史上曾短暂并存过 `2.0` / `2.1` 内部代号（由「命令行脚本 → Web UI 版」的迭代历史沿用而来），该套编号已废弃；
 > - **GitHub Release 标签 `v1.0`** 是本项目的**首次公开发布**记录，属于历史事实，保持不变；
-> - 后续公开发布在 `1.x` 线上递增（`1.3.4` → `1.3.5` → `1.4` → …）。
+> - 后续公开发布在 `1.x` 线上递增（`1.3.5` → `1.3.6` → `1.4` → …）。
