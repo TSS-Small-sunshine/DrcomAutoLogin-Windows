@@ -44,6 +44,7 @@ Source: "LICENSE.txt"; DestDir: "{app}"; Flags: ignoreversion
 Source: "config.json.template"; DestDir: "{app}"; DestName: "config.json"; Flags: ignoreversion onlyifdoesntexist
 Source: "password.txt.template"; DestDir: "{app}"; DestName: "password.txt"; Flags: ignoreversion onlyifdoesntexist
 Source: "..\tools\nssm.exe"; DestDir: "{app}\tools"; Flags: ignoreversion
+Source: "..\python\*"; DestDir: "{app}\python"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 [Dirs]
 Name: "{app}\logs"
@@ -65,13 +66,19 @@ Filename: "{cmd}"; Parameters: "/c ""{app}\tools\nssm.exe"" remove DrcomAutoLogi
 [Code]
 
 // ============================================================
-//   GetPythonPath - 探测 Python 3.14 安装位置
+//   GetPythonPath - 探测可用的 Python 解释器
+//   优先返回安装包内嵌的 Python 运行时（{app}\python\python.exe）；
+//   内嵌运行时不存在时才回退到注册表 / 常见安装路径。
 //   返回完整路径（含文件名），失败返回空字符串
 // ============================================================
 function GetPythonPath(): string;
 var
   RegValue: string;
+  Embedded: string;
 begin
+  // 0. 优先：安装包内嵌 Python 运行时（目标机无需预装 Python）
+  Embedded := ExpandConstant('{app}\python\python.exe');
+  if FileExists(Embedded) then begin Result := Embedded; Exit; end;
   // 1. 注册表 HKLM
   if RegQueryStringValue(HKEY_LOCAL_MACHINE, 'SOFTWARE\Python\PythonCore\3.14\InstallPath', '', RegValue) then
   begin
@@ -93,28 +100,14 @@ begin
 end;
 
 // ============================================================
-//   InitializeSetup - 安装前 Python 探测
+//   InitializeSetup - 安装前检查
+//   安装包已内嵌 Python 运行时（{app}\python\python.exe），
+//   目标机无需预装 Python，因此这里不做阻断性检查、也不弹任何提示。
+//   「找不到解释器」的兜底报错已移到 RegisterService()（真正需要时再报）。
 // ============================================================
 function InitializeSetup(): Boolean;
-var
-  PythonPath: string;
 begin
-  PythonPath := GetPythonPath();
-  if PythonPath = '' then
-  begin
-    MsgBox('未检测到 Python 3.14。' + #13#10 + #13#10 +
-           '请先安装 Python 3.14，或将 python.exe 所在目录加入 PATH。' + #13#10 +
-           'Python 官网: https://www.python.org/downloads/' + #13#10 + #13#10 +
-           '安装路径可以是:' + #13#10 +
-           '  C:\Python314\python.exe' + #13#10 +
-           '  C:\Program Files\Python314\python.exe',
-           mbError, MB_OK);
-    Result := False;
-  end
-  else
-  begin
-    Result := True;
-  end;
+  Result := True;
 end;
 
 // ============================================================
@@ -173,10 +166,21 @@ var
   NSSM: string;
   ResultCode: Integer;
 begin
-  PythonPath := GetPythonPath();
   AppDir := ExpandConstant('{app}');
+  PythonPath := GetPythonPath();
   ScriptPath := AppDir + '\联网_service.py';
   NSSM := AppDir + '\tools\nssm.exe';
+
+  // 兜底报错：内嵌 Python 缺失（正常安装包不会走到这里）
+  if PythonPath = '' then
+  begin
+    MsgBox('未找到可用的 Python 解释器。' + #13#10 + #13#10 +
+           '安装包应自带内嵌 Python：' + AppDir + '\python\python.exe' + #13#10 +
+           '若该文件缺失，说明安装包不完整，请重新下载安装包。' + #13#10 + #13#10 +
+           '（若确实想用系统 Python，请安装 Python 3，例如 C:\Python314\）',
+           mbError, MB_OK);
+    Exit;
+  end;
 
   // 幂等：先停再删
   Exec(NSSM, 'stop DrcomAutoLogin', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);

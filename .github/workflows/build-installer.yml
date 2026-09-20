@@ -74,6 +74,38 @@ jobs:
           Write-Host "tools\nssm.exe = $size 字节"
           if ($size -lt 100000) { throw "nssm.exe 异常" }
 
+      - name: Prepare embedded Python
+        shell: pwsh
+        run: |
+          # 官方 embeddable 包（纯标准库脚本专用运行时的最小发行版）
+          # 按顺序尝试，第一个成功下载的即采用（避免某个小版本被撤下导致构建失败）
+          $candidates = @(
+            "https://www.python.org/ftp/python/3.12.10/python-3.12.10-embed-amd64.zip",
+            "https://www.python.org/ftp/python/3.12.9/python-3.12.9-embed-amd64.zip",
+            "https://www.python.org/ftp/python/3.11.9/python-3.11.9-embed-amd64.zip"
+          )
+          $zip = Join-Path $env:RUNNER_TEMP "python-embed.zip"
+          $ok = $false
+          foreach ($u in $candidates) {
+            try {
+              Write-Host "尝试下载: $u"
+              Invoke-WebRequest -Uri $u -OutFile $zip -UseBasicParsing -TimeoutSec 180
+              if ((Get-Item $zip).Length -gt 5000000) { Write-Host "下载成功: $((Get-Item $zip).Length) 字节"; $ok = $true; break }
+            } catch { Write-Host "失败: $($_.Exception.Message)" }
+          }
+          if (-not $ok) { throw "内嵌 Python 下载失败（所有候选地址均不可用）" }
+
+          $dst = "python"
+          if (Test-Path $dst) { Remove-Item $dst -Recurse -Force }
+          New-Item -ItemType Directory -Force -Path $dst | Out-Null
+          Expand-Archive -Path $zip -DestinationPath $dst -Force
+
+          $py = Join-Path $dst "python.exe"
+          if (-not (Test-Path $py)) { throw "解压后未找到 python.exe" }
+          $ver = (& $py -c "import sys; print(sys.version)" 2>&1) -join ' '
+          Write-Host "内嵌 Python 版本: $ver"
+          Write-Host "内嵌 Python 文件数: $((Get-ChildItem $dst -Recurse -File).Count)"
+
       - name: Resolve version
         shell: pwsh
         run: |
@@ -122,7 +154,7 @@ jobs:
           | 应用版本 | `$env:APP_VERSION` |
           | 构建提交 | ``${{ github.sha }}`` |
           | 构建编号 | #${{ github.run_number }} |
-          | 系统要求 | Windows 10/11 x64 + Python 3 |
+          | 系统要求 | Windows 10/11 x64（安装包已内嵌 Python，无需预装） |
 
           安装后会自动注册系统服务、创建桌面与开始菜单快捷方式。
           首次使用请通过 Web UI（``http://127.0.0.1:8848``）填写账号与密码。

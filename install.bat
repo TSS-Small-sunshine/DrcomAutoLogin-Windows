@@ -41,20 +41,29 @@ echo ============================================================
 echo.
 
 REM ============================================================
-REM   检测 Python
+REM   检测 Python（优先使用脚本同目录的内嵌运行时）
 REM ============================================================
 set "PYTHON="
-where python >nul 2>&1
-if not errorlevel 1 (
-    for /f "delims=" %%i in ('where python') do (
-        if not defined PYTHON set "PYTHON=%%i"
+
+REM 0. 优先：脚本同目录下的内嵌 Python（CI 构建 / 安装包自带，免预装）
+if exist "!SCRIPT_DIR!\python\python.exe" (
+    set "PYTHON=!SCRIPT_DIR!\python\python.exe"
+)
+
+REM 1. 其次：PATH 中的 python
+if not defined PYTHON (
+    where python >nul 2>&1
+    if not errorlevel 1 (
+        for /f "delims=" %%i in ('where python') do (
+            if not defined PYTHON set "PYTHON=%%i"
+        )
     )
 )
 if "!PYTHON!"=="" (
     if exist "C:\Python314\python.exe" set "PYTHON=C:\Python314\python.exe"
 )
 if "!PYTHON!"=="" (
-    echo [ERROR] 未找到 python.exe。请将 Python 加入 PATH 或安装到 C:\Python314\
+    echo [ERROR] 未找到 python.exe。请将 Python 加入 PATH、安装到 C:\Python314\，或改用自带内嵌 Python 的安装包
     pause
     exit /b 1
 )

@@ -37,7 +37,8 @@ Windows 版校园网认证网关自动登录工具：开机自启 + 周期自检
 
 | 分类 | 技术 / 版本 | 说明 |
 | --- | --- | --- |
-| 运行环境 | **Python 3**（实测 3.14）、Windows 10 / 11 x64 | 需要 `python.exe` 在 PATH 中，或装在 `C:\Python314\` |
+| 运行环境 | Windows 10 / 11 x64（**安装包已内嵌 Python，无需预装**） | 安装包自带 CPython embeddable 运行时到 `python\`，目标机**不需要**任何 Python |
+| 从源码运行 | **Python 3**（实测 3.14） | 仅「源码方式」（`install.bat` / 直接跑脚本）才需要自备 Python：需 `python.exe` 在 PATH 中，或装在 `C:\Python314\` |
 | 依赖 | **Python 标准库，零第三方包** | `urllib` / `json` / `socket` / `http.server` / `threading` / `logging` |
 | Web UI | `http.server`（stdlib）+ 内联 HTML / CSS / JS | 单文件内嵌页面，**无 CDN、无外部资源**，离线可用 |
 | 服务托管 | **NSSM 2.24** | 由 `install.bat` 自动下载到 `tools\nssm.exe`，**不入库** |
@@ -171,6 +172,7 @@ DrcomAutoLogin-Windows/
 ├── README.md                  # 本文件
 ├── LICENSE                    # MIT 许可证
 ├── .gitignore                 # 排除凭据 / 运行数据 / 构建产物
+├── python/                    # 内嵌 Python 运行时（CI 构建时下载，不随仓库分发）
 ├── .github/workflows/build-installer.yml  # 自动构建安装程序并发布 Release
 └── packaging/                 # 【可选】打包成安装程序
     ├── build.bat              # 构建入口（双击运行）
@@ -182,13 +184,21 @@ DrcomAutoLogin-Windows/
     └── README.md              # 打包与安装包使用说明
 ```
 
-> 运行时才会生成、**不在仓库中**：`config.json`、`password.txt`、`logs\`、`tools\`（NSSM）、`packaging\output\`。
+> 运行时才会生成、**不在仓库中**：`config.json`、`password.txt`、`logs\`、`tools\`（NSSM）、`python\`（CI 构建时下载的内嵌 Python 运行时，打进安装包）、`packaging\output\`。
 
 ---
 
 ## 快速开始
 
-### 路径 A：一键安装（推荐）
+### 路径 0：直接下载安装程序（最省事，推荐）
+
+打开 <https://github.com/TSS-Small-sunshine/DrcomAutoLogin-Windows/releases/tag/installer> → 下载 `DrcomAutoLogin-Setup-v*.exe` → 双击安装。
+
+> 安装包**已内嵌 Python 运行时**，目标机无需预先安装 Python。
+
+### 路径 A：一键安装（源码方式）
+
+> 此方式需要本机已安装 Python 3（安装包方式不需要）。
 
 1. **确认已安装 Python 3**（实测 3.14），命令行执行 `python --version` 能看到版本号
 2. **以管理员身份**双击 `install.bat`（脚本会自动请求提权）
@@ -220,7 +230,7 @@ DrcomAutoLogin-Windows/
 
 <https://github.com/TSS-Small-sunshine/DrcomAutoLogin-Windows/releases/tag/installer>
 
-> CI 流程：安装 Inno Setup 6 → 准备中文语言文件 → 下载 NSSM 到 `tools\` → 用 ISCC 编译 `packaging\setup.iss` → 校验产物 → 上传 artifact → 发布到 tag `installer` 的 Release。
+> CI 流程：安装 Inno Setup 6 → 准备中文语言文件 → 下载 NSSM 到 `tools\` → 下载并解压内嵌 Python 到 `python\` → 用 ISCC 编译 `packaging\setup.iss` → 校验产物 → 上传 artifact → 发布到 tag `installer` 的 Release。
 
 ---
 
@@ -259,7 +269,7 @@ DrcomAutoLogin-Windows/
 ## 常见问题
 
 **Q1：服务起不来 / 装了但没反应？**
-看 `logs\service_stderr.log`。最常见原因是 Python 不在 PATH：命令行执行 `python --version` 验证，或把 Python 装到 `C:\Python314\`。装完可用管理员运行 `tools\nssm.exe restart DrcomAutoLogin`。
+看 `logs\service_stderr.log`。**使用安装包版本时不会出现该问题**（安装包已内嵌 Python 运行时，目标机无需预装 Python）。若用源码方式：最常见原因是 Python 不在 PATH，命令行执行 `python --version` 验证，或把 Python 装到 `C:\Python314\`。装完可用管理员运行 `tools\nssm.exe restart DrcomAutoLogin`。
 
 **Q2：日志一直显示「网关不可达」？**
 说明当前不在校园网内，或被分到了别的网段。确认已连上校园网 Wi-Fi / 网线，并核对 `config.json` 的 `host` 是否为所在学校的网关地址（本项目默认值是**福建农业职业技术学院**的 `172.16.80.3`）。

@@ -30,6 +30,13 @@ $LangManualUrl   = 'https://github.com/jrsoftware/issrc/tree/main/Files/Language
 $NssmUrl         = 'https://nssm.cc/release/nssm-2.24.zip'
 $InnoSetupUrl    = 'https://jrsoftware.org/isdl.php'
 $NssmManualUrl   = 'https://nssm.cc/download'
+# 内嵌 Python（官方 Windows embeddable package）候选下载地址，按顺序依次尝试，第一个成功的即使用
+$PythonEmbedUrls = @(
+    'https://www.python.org/ftp/python/3.12.10/python-3.12.10-embed-amd64.zip',
+    'https://www.python.org/ftp/python/3.12.9/python-3.12.9-embed-amd64.zip',
+    'https://www.python.org/ftp/python/3.11.9/python-3.11.9-embed-amd64.zip'
+)
+$PythonManualUrl = 'https://www.python.org/downloads/windows/'
 
 # ============================================================
 #   步骤 0 - 自身提权
@@ -90,6 +97,7 @@ $OutputDir    = Join-Path $PackagingDir 'output'
 $IssPath      = Join-Path $PackagingDir 'setup.iss'
 $LogPath      = Join-Path $PackagingDir 'build.log'
 $NssmTarget   = Join-Path $ProjectDir 'tools\nssm.exe'
+$PythonDir    = Join-Path $ProjectDir 'python'
 
 # ============================================================
 #   步骤 3 - 全程 transcript 日志
@@ -430,7 +438,112 @@ try {
     }
 
     # ============================================================
-    #   步骤 7 - 准备 output 目录
+    #   步骤 7 - 准备内嵌 Python
+    #   setup.iss 的 [Files] 段引用了 ..\python\*（DestDir: {app}\python），
+    #   所以必须在调用 ISCC 之前把官方 embeddable 包解压到 <仓库根>\python\，
+    #   否则源文件无匹配，ISCC 会直接报错。
+    # ============================================================
+    $pyExe              = Join-Path $PythonDir 'python.exe'
+    $pythonNeedDownload = $true
+
+    if (Test-Path -LiteralPath $pyExe -PathType Leaf) {
+        Write-Info ('内嵌 Python 已存在，跳过下载: ' + $pyExe + ' (' + (Get-Item -LiteralPath $pyExe).Length + ' 字节)')
+        $pythonNeedDownload = $false
+    } else {
+        Write-Warn ('缺少内嵌 Python: ' + $PythonDir)
+    }
+
+    if ($pythonNeedDownload) {
+        $pyZip      = Join-Path $env:TEMP ('python-embed-' + $PID + '.zip')
+        $pyUrlCount = @($PythonEmbedUrls).Count
+        $pyFromUrl  = 0
+        $pyVersion  = '未知'
+
+        # 依次尝试各候选地址，第一个通过校验的即使用
+        for ($pi = 0; $pi -lt $pyUrlCount; $pi++) {
+            $pyNumber = $pi + 1
+            $pyUrl    = $PythonEmbedUrls[$pi]
+            $pyErr    = $null
+            Write-Info ('尝试内嵌 Python 下载地址 ' + $pyNumber + '/' + $pyUrlCount + ': ' + $pyUrl)
+
+            # 每次尝试前清掉上一轮的残留，避免把旧文件当成本次下载结果
+            if (Test-Path -LiteralPath $pyZip -PathType Leaf) {
+                Remove-Item -LiteralPath $pyZip -Force -ErrorAction SilentlyContinue
+            }
+
+            try {
+                Invoke-WebRequest -Uri $pyUrl -OutFile $pyZip -UseBasicParsing -TimeoutSec 300
+            } catch {
+                $pyErr = $_.Exception.Message
+            }
+            # 校验 1: 文件存在
+            if (-not $pyErr) {
+                if (-not (Test-Path -LiteralPath $pyZip -PathType Leaf)) {
+                    $pyErr = '下载后压缩包不存在'
+                }
+            }
+            # 校验 2: 大小合理（embed-amd64 约 10 MB，代理/网关错误页远小于此）
+            if (-not $pyErr) {
+                $pyZipSize = (Get-Item -LiteralPath $pyZip).Length
+                if ($pyZipSize -le 5000000) {
+                    $pyErr = ('压缩包只有 ' + $pyZipSize + ' 字节 (<= 5000000)，疑似错误页')
+                }
+            }
+
+            if (-not $pyErr) {
+                if ($pyUrl -match 'python-(\d+\.\d+\.\d+)-embed') { $pyVersion = $Matches[1] }
+                $pyFromUrl = $pyNumber
+                break
+            }
+
+            Write-Warn ('下载地址 ' + $pyNumber + ' 失败: ' + $pyErr)
+            if (Test-Path -LiteralPath $pyZip -PathType Leaf) {
+                Remove-Item -LiteralPath $pyZip -Force -ErrorAction SilentlyContinue
+            }
+        }
+
+        if ($pyFromUrl -eq 0) {
+            $pyHint = @('        已尝试以下候选地址，均不可用:')
+            foreach ($pyUrl in $PythonEmbedUrls) { $pyHint += ('          - ' + $pyUrl) }
+            $pyHint += ''
+            $pyHint += '        解决办法: 手动下载官方 Windows embeddable package (64-bit) 并解压，'
+            $pyHint += ('                  把解压出的全部文件放到: ' + $PythonDir)
+            $pyHint += '                  解压后该目录下应当能看到 python.exe'
+            $pyHint += ('        下载页: ' + $PythonManualUrl)
+            Stop-Build -Message ('内嵌 Python 下载失败（' + $pyUrlCount + ' 个候选地址均不可用）') -Hint $pyHint
+        }
+
+        Write-Info ('正在解压内嵌 Python 到: ' + $PythonDir)
+        try {
+            if (-not (Test-Path -LiteralPath $PythonDir -PathType Container)) {
+                New-Item -ItemType Directory -Path $PythonDir -Force | Out-Null
+            }
+            Expand-Archive -LiteralPath $pyZip -DestinationPath $PythonDir -Force
+        } catch {
+            Stop-Build -Message ('解压内嵌 Python 失败: ' + $_.Exception.Message) -Hint @(
+                '        压缩包: ' + $pyZip,
+                ('        可手动解压后把全部文件放到: ' + $PythonDir)
+            )
+        }
+
+        # 校验解压结果：setup.iss 依赖 python\python.exe
+        if (-not (Test-Path -LiteralPath $pyExe -PathType Leaf)) {
+            Stop-Build -Message ('解压后没有找到 python.exe: ' + $pyExe) -Hint @(
+                ('        解压目录: ' + $PythonDir),
+                ('        可手动下载官方 embeddable 包后解压到该目录: ' + $PythonManualUrl)
+            )
+        }
+
+        $pyFileCount = @(Get-ChildItem -LiteralPath $PythonDir -Recurse -File -ErrorAction SilentlyContinue).Count
+        Write-Info ('内嵌 Python 版本: ' + $pyVersion + ' (' + $PythonEmbedUrls[$pyFromUrl - 1] + ')')
+        Write-Info ('内嵌 Python 文件数: ' + $pyFileCount)
+
+        # 清理临时压缩包（失败不影响构建）
+        Remove-Item -LiteralPath $pyZip -Force -ErrorAction SilentlyContinue
+    }
+
+    # ============================================================
+    #   步骤 8 - 准备 output 目录
     # ============================================================
     if (-not (Test-Path -LiteralPath $OutputDir -PathType Container)) {
         Write-Info ('创建输出目录: ' + $OutputDir)
@@ -443,7 +556,7 @@ try {
     }
 
     # ============================================================
-    #   步骤 8 - 检查输入文件（只报告，不修改）
+    #   步骤 9 - 检查输入文件（只报告，不修改）
     # ============================================================
     if (-not (Test-Path -LiteralPath $IssPath -PathType Leaf)) {
         Stop-Build -Message ('找不到 Inno Setup 脚本: ' + $IssPath) -Hint @(
@@ -454,7 +567,7 @@ try {
     Write-Info ('输入脚本: ' + $IssPath + ' (' + (Get-Item -LiteralPath $IssPath).Length + ' 字节)')
 
     # ============================================================
-    #   步骤 9 - 调用 ISCC.exe 编译
+    #   步骤 10 - 调用 ISCC.exe 编译
     # ============================================================
     Write-Host ''
     Write-Info ('开始编译: ' + $IssPath)
@@ -473,7 +586,7 @@ try {
     Write-Info ('ISCC 退出码: ' + $rc)
 
     # ============================================================
-    #   步骤 10 - 结果校验
+    #   步骤 11 - 结果校验
     # ============================================================
     if ($rc -ne 0) {
         Stop-Build -Message ('ISCC.exe 编译失败 (exit code ' + $rc + ')') -Hint @(
