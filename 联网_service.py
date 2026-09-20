@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-联网_service.py — Dr.COM 校园网自动登录（Web UI 配置版 v1.2）
+联网_service.py — Dr.COM 校园网自动登录（Web UI 配置版 v1.3）
 
 架构
     主线程：阻塞在 ThreadingHTTPServer 上，提供 Web UI 与 REST API。
@@ -23,13 +23,16 @@
     logs/service_stderr.log — NSSM stderr（由 install.bat 配置）
 """
 
+import hashlib
 import json
 import logging
 import os
 import random
 import re
+import shutil
 import signal
 import socket
+import subprocess
 import sys
 import threading
 import time
@@ -43,7 +46,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 # ============================================================
 # 常量
 # ============================================================
-VERSION = "1.2"
+VERSION = "1.3"
 BACKOFF_LEVELS = [5, 10, 20, 40, 60]  # 分钟，索引 = 连续失败次数，封顶 60
 
 DEFAULT_CONFIG = {
@@ -55,10 +58,31 @@ DEFAULT_CONFIG = {
     "auto_check_interval_min": 30,
     "network_wait_timeout_sec": 60,
     "ui_port": 8848,
+    # —— 自动升级字段（v1.3 新增）——
+    "auto_update_enabled": True,
+    "update_check_interval_hours": 6,
+    "update_min_free_disk_mb": 200,
 }
 
 ALLOWED_SUFFIXES = ("", "@yd", "@dx", "@lt")
 ALLOWED_INTERVALS = (5, 15, 30, 60, 120)
+ALLOWED_UPDATE_INTERVALS = (6, 12, 24)
+
+# —— 升级常量 ——
+GITHUB_REPO = "TSS-Small-sunshine/DrcomAutoLogin-Windows"
+GITHUB_RELEASES_API = "https://api.github.com/repos/{}/releases/latest".format(GITHUB_REPO)
+GITHUB_API_VERSION = "2022-11-28"
+GITHUB_UA = "DrcomAutoLogin-Windows/{}".format(VERSION)
+HTTP_TIMEOUT_SEC = 8
+DOWNLOAD_CHUNK_BYTES = 64 * 1024  # 64KB
+DOWNLOAD_TIMEOUT_SEC = 300  # 5 分钟
+INSTALLER_FILENAME_PATTERN = "DrcomAutoLogin-Setup-v{ver}.exe"
+NSSM_REGISTRY_PATH = r"HKLM\SYSTEM\CurrentControlSet\Services\DrcomAutoLogin"
+NSSM_PARAMETERS_PATH = NSSM_REGISTRY_PATH + r"\Parameters"
+SERVICE_NAME = "DrcomAutoLogin"
+UPGRADE_HISTORY_MAX_LINES = 50
+UPGRADE_SUCCESS_TTL_SEC = 5 * 60  # 成功后绿 banner 仅保留 5 分钟
+BACKUP_RETENTION_DAYS = 7
 
 
 # ============================================================
@@ -69,6 +93,10 @@ CONFIG_FILE = os.path.join(BASE_DIR, "config.json")
 PASSWORD_FILE = os.path.join(BASE_DIR, "password.txt")
 LOG_DIR = os.path.join(BASE_DIR, "logs")
 LOG_FILE = os.path.join(LOG_DIR, "campus_login.log")
+# —— 升级相关路径 ——
+TOOLS_DIR = os.path.join(BASE_DIR, "tools")
+NSSM_PATH = os.path.join(TOOLS_DIR, "nssm.exe")
+UPGRADE_LOG_FILE = os.path.join(LOG_DIR, "upgrade.log")
 
 # 启动时确保日志目录存在（幂等）
 try:
@@ -93,6 +121,18 @@ STATE = {
     "current_account": "",
     "login_in_progress": False,
     "service_uptime_sec": 0,
+    # —— 自动升级字段（v1.3 新增）——
+    "update_state": None,           # None / checking / downloading / upgrading / success / error
+    "update_progress": 0,           # 0-100
+    "update_progress_message": "",  # 描述当前阶段
+    "update_lock": False,           # 是否正在升级（防并发）
+    "update_available": False,      # 是否发现新版
+    "update_latest_version": None,  # 远程最新版本号（不含 v 前缀）
+    "update_latest_url": None,      # 远程安装包直链
+    "update_last_check_at": None,   # 上次检查时间
+    "update_last_error": None,      # 上次错误信息
+    "update_target_version": None,  # 正在升级到的版本号
+    "update_success_at": None,      # 升级成功时间戳（用于自动清理绿 banner）
 }
 
 BACKOFF = {
@@ -105,6 +145,7 @@ STATE_LOCK = threading.Lock()
 BACKOFF_LOCK = threading.Lock()
 RUN_LOCK = threading.Lock()  # 串行化 run_once 多次调用
 PWD_LOCK = threading.Lock()
+UPDATE_LOCK = threading.Lock()  # 保护 update_lock 字段的并发读写
 
 
 # ============================================================
@@ -208,6 +249,19 @@ def _validate_config(cfg):
     ui_port = cfg.get("ui_port")
     if not isinstance(ui_port, int) or isinstance(ui_port, bool) or not (1024 <= ui_port <= 65535):
         errors.append("ui_port 必须是 1024-65535 之间的整数")
+
+    # —— 自动升级字段（v1.3 新增）——
+    auto_upd = cfg.get("auto_update_enabled")
+    if not isinstance(auto_upd, bool):
+        errors.append("auto_update_enabled 必须是布尔值")
+
+    upd_intv = cfg.get("update_check_interval_hours")
+    if upd_intv not in ALLOWED_UPDATE_INTERVALS:
+        errors.append("update_check_interval_hours 必须是 6 / 12 / 24 之一")
+
+    upd_disk = cfg.get("update_min_free_disk_mb")
+    if not isinstance(upd_disk, int) or isinstance(upd_disk, bool) or not (50 <= upd_disk <= 10240):
+        errors.append("update_min_free_disk_mb 必须是 50-10240 之间的整数")
 
     return errors
 
@@ -617,6 +671,637 @@ def run_periodic():
 
 
 # ============================================================
+# 自动升级（v1.3 新增）— 版本比较 / GitHub 探测 / 日志 / 状态
+# ============================================================
+def _parse_version(s):
+    """将 "1.2" / "v1.3.1" 解析为可比较的元组。解析失败返回空元组。"""
+    if not isinstance(s, str):
+        return ()
+    s = s.strip().lstrip("v").lstrip("V")
+    if not s:
+        return ()
+    # 全无数字 → 拒绝
+    if not any(c.isdigit() for c in s):
+        return ()
+    out = []
+    for part in s.split("."):
+        try:
+            out.append(int(part))
+        except ValueError:
+            # 含非数字段：截到首个非数字段为止
+            digits = ""
+            for c in part:
+                if c.isdigit():
+                    digits += c
+                else:
+                    break
+            if digits:
+                out.append(int(digits))
+            else:
+                out.append(0)
+                break
+    return tuple(out)
+
+
+def _compare_versions(local, remote):
+    """本地 vs 远程：返回 -1 / 0 / 1；不可比较返回 None。"""
+    lv = _parse_version(local)
+    rv = _parse_version(remote)
+    if not lv or not rv:
+        return None
+    # 用 (差值列表) 比较
+    n = max(len(lv), len(rv))
+    lv = lv + (0,) * (n - len(lv))
+    rv = rv + (0,) * (n - len(rv))
+    if lv < rv:
+        return -1
+    if lv > rv:
+        return 1
+    return 0
+
+
+def _ensure_upgrade_log():
+    """确保升级日志文件存在并返回句柄。每次追加写。"""
+    try:
+        os.makedirs(LOG_DIR, exist_ok=True)
+        if not os.path.isfile(UPGRADE_LOG_FILE):
+            # 原子创建（utf-8 + LF）
+            with open(UPGRADE_LOG_FILE, "a", encoding="utf-8") as f:
+                pass
+    except OSError as exc:
+        logger.warning("无法准备 upgrade.log: %s", exc)
+
+
+def _log_upgrade(level, msg):
+    """同时写到 logs/upgrade.log 与主 logger。"""
+    _ensure_upgrade_log()
+    line = "[{}] [{}] {}".format(datetime.now().strftime("%Y-%m-%d %H:%M:%S"), level, msg)
+    try:
+        with open(UPGRADE_LOG_FILE, "a", encoding="utf-8") as f:
+            f.write(line + "\n")
+    except OSError as exc:
+        logger.warning("写 upgrade.log 失败: %s", exc)
+    if level == "ERROR":
+        logger.error("UPGRADE: %s", msg)
+    elif level == "WARN":
+        logger.warning("UPGRADE: %s", msg)
+    else:
+        logger.info("UPGRADE: %s", msg)
+
+
+def _check_disk_free_mb():
+    """检查 BASE_DIR 所在磁盘剩余空间（MB），失败返回 None。"""
+    try:
+        usage = shutil.disk_usage(BASE_DIR)
+        return int(usage.free / (1024 * 1024))
+    except (OSError, AttributeError):
+        return None
+
+
+def _check_github_latest():
+    """调用 GitHub releases/latest API。
+    返回 (version, asset_url, digest, size, published_at) 元组；失败返回 None。
+    digest 形如 "sha256:abcd..."，已剥掉前缀。
+    """
+    try:
+        req = urllib.request.Request(
+            GITHUB_RELEASES_API,
+            headers={
+                "User-Agent": GITHUB_UA,
+                "Accept": "application/vnd.github+json",
+                "X-GitHub-Api-Version": GITHUB_API_VERSION,
+            },
+        )
+        with urllib.request.urlopen(req, timeout=HTTP_TIMEOUT_SEC) as resp:
+            raw = resp.read().decode("utf-8", errors="replace")
+    except (urllib.error.URLError, OSError, TimeoutError) as exc:
+        logger.warning("GitHub releases/latest 不可达: %s", exc)
+        return None
+    try:
+        data = json.loads(raw)
+    except (ValueError, json.JSONDecodeError) as exc:
+        logger.warning("GitHub API JSON 解析失败: %s", exc)
+        return None
+    if not isinstance(data, dict):
+        return None
+    tag = data.get("tag_name")
+    if not isinstance(tag, str) or not tag:
+        return None
+    version = tag.strip().lstrip("v").lstrip("V")
+    assets = data.get("assets") or []
+    asset_url = None
+    digest = None
+    size = None
+    if isinstance(assets, list):
+        for a in assets:
+            if not isinstance(a, dict):
+                continue
+            name = a.get("name") or ""
+            if isinstance(name, str) and name.lower().endswith(".exe"):
+                asset_url = a.get("browser_download_url")
+                d = a.get("digest") or ""
+                if isinstance(d, str) and d.startswith("sha256:"):
+                    digest = d.split(":", 1)[1]
+                s = a.get("size")
+                if isinstance(s, int):
+                    size = s
+                break
+    if not asset_url:
+        return None
+    published = data.get("published_at")
+    return version, asset_url, digest, size, published
+
+
+def _set_update_state(**kwargs):
+    """写 STATE 的 update_* 字段。线程安全。"""
+    with STATE_LOCK:
+        for k, v in kwargs.items():
+            STATE[k] = v
+
+
+def _get_update_field(key):
+    with STATE_LOCK:
+        return STATE.get(key)
+
+
+def _acquire_update_lock():
+    """原子检查并获取升级锁。返回 True=获得锁；False=已在升级。"""
+    with UPDATE_LOCK:
+        with STATE_LOCK:
+            if STATE.get("update_lock"):
+                return False
+            STATE["update_lock"] = True
+            STATE["update_state"] = "checking"
+            STATE["update_progress"] = 0
+            STATE["update_progress_message"] = "准备升级..."
+            STATE["update_last_error"] = None
+            return True
+
+
+def _release_update_lock():
+    with UPDATE_LOCK:
+        with STATE_LOCK:
+            STATE["update_lock"] = False
+
+
+def _download_installer(url, dest_path, expected_size, progress_callback=None):
+    """流式下载安装器到本地。返回写入字节数或抛异常。
+
+    progress_callback(downloaded_bytes, total_bytes_or_None) 每 ~200ms 触发。
+    """
+    last_report = [0.0]
+    last_bytes = [0]
+
+    try:
+        req = urllib.request.Request(
+            url,
+            headers={"User-Agent": GITHUB_UA, "Accept": "application/octet-stream"},
+        )
+        with urllib.request.urlopen(req, timeout=DOWNLOAD_TIMEOUT_SEC) as resp:
+            total_header = resp.headers.get("Content-Length")
+            total = int(total_header) if (total_header and total_header.isdigit()) else None
+            tmp = dest_path + ".part"
+            with open(tmp, "wb") as f:
+                while True:
+                    chunk = resp.read(DOWNLOAD_CHUNK_BYTES)
+                    if not chunk:
+                        break
+                    f.write(chunk)
+                    last_bytes[0] += len(chunk)
+                    now = time.time()
+                    if progress_callback and (now - last_report[0] >= 0.2 or last_bytes[0] == total):
+                        last_report[0] = now
+                        try:
+                            progress_callback(last_bytes[0], total or expected_size)
+                        except Exception:  # noqa: BLE001
+                            pass
+            # 原子改名
+            os.replace(tmp, dest_path)
+            return last_bytes[0]
+    except (urllib.error.URLError, OSError, TimeoutError):
+        # 清理半成品
+        for p in (dest_path + ".part", dest_path):
+            try:
+                if os.path.isfile(p):
+                    os.remove(p)
+            except OSError:
+                pass
+        raise
+
+
+def _verify_sha256(path, expected_hex):
+    """计算文件 SHA256，对比十六进制串（小写）。返回 bool。"""
+    if not expected_hex:
+        return False
+    h = hashlib.sha256()
+    try:
+        with open(path, "rb") as f:
+            for chunk in iter(lambda: f.read(DOWNLOAD_CHUNK_BYTES), b""):
+                h.update(chunk)
+    except OSError:
+        return False
+    return h.hexdigest().lower() == expected_hex.lower()
+
+
+def _backup_service_py():
+    """复制联网_service.py 到 %TEMP%，返回 backup 路径。"""
+    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+    backup = os.path.join(os.environ.get("TEMP", "."), "drcom_backup_{}.py".format(ts))
+    try:
+        shutil.copy2(os.path.join(BASE_DIR, "联网_service.py"), backup)
+        return backup
+    except OSError as exc:
+        logger.error("备份联网_service.py 失败: %s", exc)
+        return None
+
+
+def _read_nssm_appexit():
+    """从注册表读 AppExit 值；不存在 / 权限不足返回 None。"""
+    try:
+        import winreg
+        with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, NSSM_PARAMETERS_PATH) as k:
+            value, _ = winreg.QueryValueEx(k, "AppExit")
+            return value
+    except (OSError, ImportError):
+        return None
+
+
+def _write_nssm_appexit(value):
+    """直写 AppExit 到注册表。失败抛 OSError。"""
+    import winreg
+    with winreg.CreateKey(winreg.HKEY_LOCAL_MACHINE, NSSM_PARAMETERS_PATH) as k:
+        winreg.SetValueEx(k, "AppExit", 0, winreg.REG_SZ, value)
+
+
+def _set_nssm_appexit(value):
+    """设 AppExit。先试注册表直写，再试 nssm.exe 调用。"""
+    try:
+        _write_nssm_appexit(value)
+        return True
+    except (OSError, ImportError) as reg_exc:
+        # fallback：调 nssm.exe（路径含空格 → 用 list + 0x22 quote）
+        if not os.path.isfile(NSSM_PATH):
+            logger.warning("nssm.exe 不在 %s，无法 fallback", NSSM_PATH)
+            return False
+        try:
+            subprocess.run(
+                [NSSM_PATH, "set", SERVICE_NAME, "AppExit", value],
+                timeout=15,
+                check=False,
+            )
+            return True
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            logger.warning("nssm set AppExit 失败: %s", exc)
+            return False
+
+
+def _nssm_stop_service(timeout_sec=30):
+    """通过 nssm.exe 停服务。timeout 后 fallback 不做（installer 会接管）。"""
+    if not os.path.isfile(NSSM_PATH):
+        _log_upgrade("WARN", "nssm.exe 不存在，无法显式 stop；依赖 installer / NSSM 接管")
+        return False
+    try:
+        proc = subprocess.run(
+            [NSSM_PATH, "stop", SERVICE_NAME],
+            timeout=timeout_sec,
+            check=False,
+        )
+        _log_upgrade("INFO", "nssm stop 返回码: {}".format(proc.returncode))
+        return proc.returncode == 0
+    except subprocess.TimeoutExpired:
+        _log_upgrade("WARN", "nssm stop 超时（{}s），fallback 由 installer 接管".format(timeout_sec))
+        return False
+    except OSError as exc:
+        _log_upgrade("WARN", "nssm stop 调用失败: {}".format(exc))
+        return False
+
+
+def _launch_installer(installer_path):
+    """用 Inno Setup 静默参数启动 installer，返回 Popen 对象或抛异常。"""
+    args = [
+        installer_path,
+        "/SP-",
+        "/SILENT",
+        "/CLOSEAPPLICATIONS",
+        "/TASKS=startservice",
+    ]
+    return subprocess.Popen(args, close_fds=True)
+
+
+# ============================================================
+# 自动升级主流程（11 步）
+# ============================================================
+def _do_update_now():
+    """完整执行一次升级检测 + 下载 + 升级。返回 dict（用于 HTTP 响应）。"""
+    if not _acquire_update_lock():
+        return {"ok": False, "error": "升级正在进行中"}
+    try:
+        # —— 1. 锁住：state=checking（acquire 时已设置）——
+        _set_update_state(update_progress_message="检查 GitHub 最新版本...")
+        cfg = _load_config()
+        min_free_mb = int(cfg.get("update_min_free_disk_mb", 200))
+
+        # —— 2. 校验前置条件 ——
+        # 2a. 磁盘剩余
+        free_mb = _check_disk_free_mb()
+        if free_mb is not None and free_mb < min_free_mb:
+            msg = "磁盘剩余空间不足：{} MB < {} MB".format(free_mb, min_free_mb)
+            _set_update_state(update_state="error", update_progress=0, update_progress_message=msg)
+            _log_upgrade("ERROR", msg)
+            return {"ok": False, "error": msg}
+
+        # 2b. nssm.exe 存在
+        if not os.path.isfile(NSSM_PATH):
+            msg = "找不到 nssm.exe：{}".format(NSSM_PATH)
+            _set_update_state(update_state="error", update_progress=0, update_progress_message=msg)
+            _log_upgrade("ERROR", msg)
+            return {"ok": False, "error": msg}
+
+        # 2c. GitHub API 可达
+        latest = _check_github_latest()
+        if latest is None:
+            msg = "GitHub releases/latest 不可达或返回异常"
+            _set_update_state(update_state="error", update_progress=0, update_progress_message=msg)
+            _log_upgrade("ERROR", msg)
+            return {"ok": False, "error": msg}
+        remote_ver, asset_url, digest, asset_size, published = latest
+
+        # —— 3. 比较版本 ——
+        cmp = _compare_versions(VERSION, remote_ver)
+        if cmp is None:
+            msg = "无法比较版本：本机 {} vs 远程 {}".format(VERSION, remote_ver)
+            _set_update_state(update_state="error", update_progress=0, update_progress_message=msg)
+            _log_upgrade("ERROR", msg)
+            return {"ok": False, "error": msg}
+        if cmp >= 0:
+            _set_update_state(update_state=None, update_progress=0, update_progress_message="")
+            _log_upgrade("INFO", "已是最新版本：{}（远程 {}）".format(VERSION, remote_ver))
+            return {"ok": False, "error": "已是最新版本 {}（远程 {}）".format(VERSION, remote_ver)}
+
+        _log_upgrade("INFO", "检测到新版本 {}（当前 {}），开始下载".format(remote_ver, VERSION))
+        _set_update_state(
+            update_available=True,
+            update_latest_version=remote_ver,
+            update_latest_url=asset_url,
+            update_target_version=remote_ver,
+            update_last_check_at=_now_iso(),
+        )
+
+        # —— 4. 下载 ——
+        _set_update_state(update_state="downloading", update_progress=0,
+                          update_progress_message="下载安装器（{}）...".format(remote_ver))
+
+        temp_dir = os.environ.get("TEMP", ".")
+        installer_name = INSTALLER_FILENAME_PATTERN.format(ver=remote_ver)
+        installer_path = os.path.join(temp_dir, installer_name)
+
+        def _on_progress(done, total):
+            pct = int(done * 100 / total) if total and total > 0 else 0
+            _set_update_state(update_progress=pct, update_progress_message="下载中 {}%".format(pct))
+
+        try:
+            written = _download_installer(asset_url, installer_path, asset_size, _on_progress)
+        except (urllib.error.URLError, OSError, TimeoutError) as exc:
+            msg = "下载失败：{}".format(exc)
+            _set_update_state(update_state="error", update_progress=0, update_progress_message=msg)
+            _log_upgrade("ERROR", msg)
+            return {"ok": False, "error": msg}
+
+        _log_upgrade("INFO", "下载完成：{} 字节".format(written))
+
+        # —— 5. 校验 SHA256 ——
+        if digest and not _verify_sha256(installer_path, digest):
+            try:
+                os.remove(installer_path)
+            except OSError:
+                pass
+            msg = "SHA256 校验失败，已删除安装器"
+            _set_update_state(update_state="error", update_progress=0, update_progress_message=msg)
+            _log_upgrade("ERROR", "{}（期望 {}）".format(msg, digest[:16] + "..."))
+            return {"ok": False, "error": msg}
+        elif digest:
+            _log_upgrade("INFO", "SHA256 校验通过")
+
+        # —— 6. 备份当前脚本 ——
+        backup = _backup_service_py()
+        if backup is None:
+            msg = "备份联网_service.py 失败"
+            _set_update_state(update_state="error", update_progress=0, update_progress_message=msg)
+            _log_upgrade("ERROR", msg)
+            try:
+                os.remove(installer_path)
+            except OSError:
+                pass
+            return {"ok": False, "error": msg}
+        _set_update_state(update_backup=backup)
+        _log_upgrade("INFO", "备份到 {}".format(backup))
+
+        # —— 7. 设 AppExit 为 Disabled（防止 NSSM 立即重启我们）——
+        prev_appexit = _read_nssm_appexit()
+        _set_update_state(update_prev_appexit=prev_appexit)
+        # 先记录原值到 STATE（恢复用），然后改 Disabled
+        if not _set_nssm_appexit("Disabled"):
+            _log_upgrade("WARN", "无法设 AppExit=Disabled，继续升级流程（installer 会接管）")
+        else:
+            _log_upgrade("INFO", "AppExit 已设为 Disabled（原值：{}）".format(prev_appexit))
+
+        # —— 8. 启动 installer（不 wait，独立进程）——
+        try:
+            proc = _launch_installer(installer_path)
+            _log_upgrade("INFO", "installer 已启动 PID={}".format(proc.pid))
+        except OSError as exc:
+            msg = "启动 installer 失败：{}".format(exc)
+            _set_update_state(update_state="error", update_progress=0, update_progress_message=msg)
+            _log_upgrade("ERROR", msg)
+            return {"ok": False, "error": msg}
+
+        # —— 9. 升级中状态 ——
+        _set_update_state(
+            update_state="upgrading",
+            update_progress=100,
+            update_progress_message="正在升级到 {}（约 60 秒）...".format(remote_ver),
+        )
+
+        # —— 10. 显式 nssm stop（让 installer 接管后续动作；NSSM 父进程会 SIGKILL 我们）——
+        # 这一步之后进程大概率会被杀掉，下面的代码不一定会执行到。
+        _nssm_stop_service(timeout_sec=15)
+
+        # —— 11. 如果进程没被 NSSM 杀掉（异常路径），fallback 写日志 ——
+        _log_upgrade("WARN", "显式 nssm stop 后进程仍存活，等待 NSSM 自动接管")
+        return {"ok": True, "stage": "upgrading", "version": remote_ver}
+
+    finally:
+        # 若走到这里说明流程在 installer 启动前失败 / 或 stop 没杀掉我们
+        # 正常路径下 NSSM stop 会让我们在执行 finally 前被 SIGKILL
+        _release_update_lock()
+
+
+def _do_check_now():
+    """只跑 GitHub 检查 + 状态更新，不升级。"""
+    if not _acquire_update_lock():
+        return {"ok": False, "error": "升级正在进行中"}
+    try:
+        _set_update_state(update_progress_message="检查 GitHub 最新版本...")
+        latest = _check_github_latest()
+        if latest is None:
+            _set_update_state(update_state="error", update_progress=0,
+                              update_progress_message="GitHub 不可达或返回异常",
+                              update_last_error="GitHub releases/latest 不可达",
+                              update_last_check_at=_now_iso())
+            _log_upgrade("WARN", "GitHub 检查失败")
+            return {"ok": False, "error": "GitHub 不可达或返回异常"}
+
+        remote_ver, asset_url, digest, size, published = latest
+        cmp = _compare_versions(VERSION, remote_ver)
+        if cmp is None or cmp >= 0:
+            _set_update_state(
+                update_state=None,
+                update_progress=0,
+                update_progress_message="",
+                update_available=False,
+                update_latest_version=remote_ver,
+                update_latest_url=asset_url,
+                update_last_check_at=_now_iso(),
+                update_last_error=None,
+            )
+            _log_upgrade("INFO", "检查完成：已是最新 {}".format(VERSION))
+            return {"ok": True, "update_available": False, "latest_version": remote_ver}
+
+        _set_update_state(
+            update_state=None,
+            update_progress=0,
+            update_progress_message="有新版本可用：{}".format(remote_ver),
+            update_available=True,
+            update_latest_version=remote_ver,
+            update_latest_url=asset_url,
+            update_last_check_at=_now_iso(),
+            update_last_error=None,
+        )
+        _log_upgrade("INFO", "检查完成：发现新版本 {}".format(remote_ver))
+        return {"ok": True, "update_available": True, "latest_version": remote_ver}
+    finally:
+        _release_update_lock()
+
+
+# ============================================================
+# 自动升级后台线程
+# ============================================================
+def _auto_update_loop():
+    """后台线程：按 update_check_interval_hours 周期检查 GitHub 新版。
+    注意：auto_update_enabled=False 时不主动检查，但 manual / 启动钩子仍可触发。
+    """
+    logger.info("自动升级后台线程启动")
+    # 首次启动延迟 30 秒（让服务先稳定 + Web UI 就绪）
+    if STOP_EVENT.wait(30):
+        return
+    while not STOP_EVENT.is_set():
+        try:
+            cfg = _load_config()
+            if not cfg.get("auto_update_enabled", True):
+                logger.info("auto_update_enabled=False，30s 后重新检查开关")
+                if STOP_EVENT.wait(30):
+                    return
+                continue
+            interval_sec = int(cfg.get("update_check_interval_hours", 6)) * 3600
+        except (OSError, ValueError) as exc:
+            logger.warning("读取更新配置失败: %s", exc)
+            if STOP_EVENT.wait(60):
+                return
+            continue
+
+        # 检查（不升级）：如果发现新版，写 STATE 但不触发 do_update_now
+        # 真正的升级由后台线程检测到 update_available=True 后启动
+        # 但用户明确要"静默"→ 这里直接触发升级（无需 Web UI 介入）
+        result = _do_check_now()
+        if isinstance(result, dict) and result.get("update_available"):
+            # 静默升级：立即进入升级流程
+            _log_upgrade("INFO", "后台线程检测到新版本，触发静默升级")
+            _do_update_now()
+            # 升级完大概率进程被杀；即使没被杀，也等下次循环
+            if STOP_EVENT.wait(60):
+                return
+            continue
+
+        if STOP_EVENT.wait(interval_sec):
+            return
+
+
+def _post_upgrade_startup():
+    """启动钩子：检查是否刚升级过（对比当前脚本与备份），写日志 + 清理。"""
+    try:
+        backups = []
+        for name in os.listdir(os.environ.get("TEMP", ".")):
+            if name.startswith("drcom_backup_") and name.endswith(".py"):
+                backups.append(name)
+        backups.sort(reverse=True)  # 最新在前
+        if not backups:
+            return
+        # 最新备份
+        newest = os.path.join(os.environ.get("TEMP", "."), backups[0])
+        if not os.path.isfile(newest):
+            return
+        # 对比 hash
+        def _h(p):
+            hh = hashlib.sha256()
+            try:
+                with open(p, "rb") as f:
+                    for c in iter(lambda: f.read(DOWNLOAD_CHUNK_BYTES), b""):
+                        hh.update(c)
+            except OSError:
+                return None
+            return hh.hexdigest()
+        current_hash = _h(os.path.join(BASE_DIR, "联网_service.py"))
+        backup_hash = _h(newest)
+        if current_hash and backup_hash and current_hash != backup_hash:
+            _log_upgrade("INFO", "升级完成（v{}）：当前脚本与备份不同".format(VERSION))
+            _set_update_state(
+                update_state="success",
+                update_progress=100,
+                update_progress_message="已升级到 v{}".format(VERSION),
+                update_target_version=VERSION,
+                update_success_at=_now_iso(),
+                update_last_error=None,
+            )
+        else:
+            _log_upgrade("INFO", "启动钩子：未检测到脚本变更")
+
+        # 清理 7 天前的旧备份
+        cutoff = time.time() - BACKUP_RETENTION_DAYS * 86400
+        for name in backups[1:]:
+            p = os.path.join(os.environ.get("TEMP", "."), name)
+            try:
+                if os.path.isfile(p) and os.path.getmtime(p) < cutoff:
+                    os.remove(p)
+                    _log_upgrade("INFO", "清理过期备份：{}".format(name))
+            except OSError:
+                pass
+
+        # 恢复 AppExit（与 setup.iss 一致：Default Restart + 0 Restart）
+        try:
+            _set_nssm_appexit("Default Restart")
+            _set_nssm_appexit("0 Restart")
+            _log_upgrade("INFO", "AppExit 已恢复为 Default Restart / 0 Restart")
+        except Exception as exc:  # noqa: BLE001
+            _log_upgrade("WARN", "恢复 AppExit 失败: {}".format(exc))
+    except Exception as exc:  # noqa: BLE001
+        _log_upgrade("WARN", "启动钩子异常: {}".format(exc))
+
+
+def _schedule_success_clear():
+    """5 分钟后清掉绿 banner（避免每次启动都显示）。"""
+    success_at = _get_update_field("update_success_at")
+    if not success_at:
+        return
+    try:
+        sa = datetime.fromisoformat(success_at)
+        delta = (datetime.now() - sa).total_seconds()
+        if delta >= UPGRADE_SUCCESS_TTL_SEC:
+            _set_update_state(update_state=None, update_progress_message="", update_success_at=None)
+    except ValueError:
+        _set_update_state(update_state=None, update_progress_message="", update_success_at=None)
+
+
+# ============================================================
 # Web API
 # ============================================================
 def _send_json(handler, status, payload):
@@ -784,6 +1469,88 @@ def api_post_restart(handler):
 
 
 # ============================================================
+# 自动升级 API（v1.3 新增）
+# ============================================================
+def api_get_update_status():
+    """GET /api/update/status — 当前升级状态快照。"""
+    _schedule_success_clear()  # 顺手清理过期绿 banner
+    cfg = _load_config()
+    snap = _snapshot_state()
+    return {
+        "enabled": bool(cfg.get("auto_update_enabled", True)),
+        "local_version": VERSION,
+        "latest_version": snap.get("update_latest_version"),
+        "latest_url": snap.get("update_latest_url"),
+        "update_available": bool(snap.get("update_available")),
+        "state": snap.get("update_state"),
+        "progress_pct": int(snap.get("update_progress") or 0),
+        "progress_message": snap.get("update_progress_message") or "",
+        "last_check_at": snap.get("update_last_check_at"),
+        "last_error": snap.get("update_last_error"),
+        "target_version": snap.get("update_target_version"),
+        "check_interval_hours": int(cfg.get("update_check_interval_hours", 6)),
+        "min_free_disk_mb": int(cfg.get("update_min_free_disk_mb", 200)),
+    }
+
+
+def api_post_update_check(payload):
+    """POST /api/update/check — 立即触发一次 GitHub 检查（不等后台线程）。"""
+    # 异步执行，避免阻塞 HTTP 响应
+    def _runner():
+        try:
+            _do_check_now()
+        except Exception as exc:  # noqa: BLE001
+            _log_upgrade("ERROR", "手动检查异常: {}".format(exc))
+    threading.Thread(target=_runner, daemon=True).start()
+    return 200, {"ok": True, "message": "已提交检查任务"}
+
+
+def api_post_update_install(payload):
+    """POST /api/update/install — 立即开始升级。"""
+    # 异步执行完整升级流程（耗时较长，HTTP 先返回）
+    def _runner():
+        try:
+            _do_update_now()
+        except Exception as exc:  # noqa: BLE001
+            _log_upgrade("ERROR", "手动升级异常: {}".format(exc))
+            _set_update_state(update_state="error", update_progress=0,
+                              update_progress_message="升级异常：{}".format(exc),
+                              update_last_error=str(exc))
+    threading.Thread(target=_runner, daemon=True).start()
+    return 200, {"ok": True, "message": "已提交升级任务"}
+
+
+def api_post_update_toggle(payload):
+    """POST /api/update/toggle — 切换 auto_update_enabled（payload: {enabled}）。"""
+    if not isinstance(payload, dict):
+        return 400, {"ok": False, "error": "请求体必须是 JSON 对象"}
+    enabled = payload.get("enabled")
+    if not isinstance(enabled, bool):
+        return 400, {"ok": False, "error": "enabled 必须是布尔值"}
+    try:
+        cfg = _load_config()
+        cfg["auto_update_enabled"] = enabled
+        _save_config(cfg)
+    except (ValueError, OSError) as exc:
+        return 400, {"ok": False, "error": str(exc)}
+    _log_upgrade("INFO", "auto_update_enabled 改为 {}".format(enabled))
+    return 200, {"ok": True, "auto_update_enabled": enabled}
+
+
+def api_get_update_history():
+    """GET /api/update/history — 返回 logs/upgrade.log 最后 UPGRADE_HISTORY_MAX_LINES 行。"""
+    lines = []
+    if os.path.isfile(UPGRADE_LOG_FILE):
+        try:
+            with open(UPGRADE_LOG_FILE, "r", encoding="utf-8", errors="replace") as f:
+                all_lines = f.readlines()
+            lines = [ln.rstrip("\r\n") for ln in all_lines[-UPGRADE_HISTORY_MAX_LINES:]]
+        except OSError as exc:
+            return {"lines": [], "error": str(exc), "path": UPGRADE_LOG_FILE}
+    return {"lines": lines, "path": UPGRADE_LOG_FILE}
+
+
+# ============================================================
 # HTTP Handler
 # ============================================================
 class _Handler(BaseHTTPRequestHandler):
@@ -853,6 +1620,13 @@ class _Handler(BaseHTTPRequestHandler):
             if path == "/api/health":
                 _send_json(self, 200, {"ok": True, "version": VERSION})
                 return
+            # —— 自动升级（v1.3 新增）——
+            if path == "/api/update/status":
+                _send_json(self, 200, api_get_update_status())
+                return
+            if path == "/api/update/history":
+                _send_json(self, 200, api_get_update_history())
+                return
             _send_json(self, 404, {"error": "not found"})
         except Exception as exc:  # noqa: BLE001
             logger.exception("GET %s 异常: %s", path, exc)
@@ -886,6 +1660,19 @@ class _Handler(BaseHTTPRequestHandler):
                 return
             if path == "/api/restart":
                 status, body = api_post_restart(self)
+                _send_json(self, status, body)
+                return
+            # —— 自动升级（v1.3 新增）——
+            if path == "/api/update/check":
+                status, body = api_post_update_check(payload)
+                _send_json(self, status, body)
+                return
+            if path == "/api/update/install":
+                status, body = api_post_update_install(payload)
+                _send_json(self, status, body)
+                return
+            if path == "/api/update/toggle":
+                status, body = api_post_update_toggle(payload)
                 _send_json(self, status, body)
                 return
             _send_json(self, 404, {"error": "not found"})
@@ -1344,6 +2131,66 @@ code.path {
 @keyframes toastOut { to { opacity: 0; transform: translateX(24px); } }
 
 /* ============================================================
+   10.5 升级横幅（v1.3 新增）— 黄/红/绿三色变体 + 进度条
+   ============================================================ */
+.update-banner {
+  display: flex; align-items: flex-start; gap: 14px;
+  padding: 14px 18px; margin-bottom: 16px;
+  background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-md);
+  box-shadow: var(--shadow-1);
+  animation: panelFadeIn 0.24s cubic-bezier(0.2, 0.9, 0.3, 1.1);
+}
+.update-banner[hidden] { display: none; }
+.update-banner-icon {
+  width: 36px; height: 36px; flex: none;
+  display: inline-flex; align-items: center; justify-content: center;
+  background: var(--primary-softer); color: var(--primary);
+  border-radius: 10px; font-size: 18px; font-weight: 700;
+}
+.update-banner-body { flex: 1 1 auto; min-width: 0; }
+.update-banner-title { font-size: 14px; font-weight: 650; color: var(--text-strong); margin-bottom: 2px; }
+.update-banner-desc { font-size: 12.5px; color: var(--text-muted); word-break: break-word; }
+.update-progress {
+  margin-top: 10px; height: 6px; border-radius: var(--radius-pill);
+  background: var(--surface-2); overflow: hidden;
+}
+.update-progress[hidden] { display: none; }
+.update-progress-bar {
+  height: 100%; background: var(--primary); border-radius: var(--radius-pill);
+  transition: width 0.2s ease;
+}
+.update-banner-action {
+  flex: none;
+  padding: 6px 14px; border-radius: var(--radius-pill);
+  border: 1px solid var(--border); background: var(--surface-2); color: var(--text);
+  font: inherit; font-size: 12.5px; font-weight: 600; cursor: pointer;
+  transition: background-color 0.15s, border-color 0.15s, color 0.15s;
+}
+.update-banner-action[hidden] { display: none; }
+.update-banner-action:hover { background: var(--primary-softer); border-color: var(--primary); color: var(--primary); }
+.update-banner-dismiss {
+  flex: none; width: 28px; height: 28px; padding: 0;
+  border: 0; background: transparent; color: var(--text-faint);
+  cursor: pointer; border-radius: var(--radius-sm);
+  font-size: 14px; line-height: 1;
+  transition: background-color 0.15s, color 0.15s;
+}
+.update-banner-dismiss:hover { background: var(--surface-2); color: var(--text); }
+.update-banner.warn {
+  background: var(--warn-soft); border-color: var(--warn);
+}
+.update-banner.warn .update-banner-icon { background: var(--warn); color: #fff; }
+.update-banner.warn .update-banner-progress-bar { background: var(--warn); }
+.update-banner.error {
+  background: var(--err-soft); border-color: var(--err);
+}
+.update-banner.error .update-banner-icon { background: var(--err); color: #fff; }
+.update-banner.success {
+  background: var(--ok-soft); border-color: var(--ok);
+}
+.update-banner.success .update-banner-icon { background: var(--ok); color: #fff; }
+
+/* ============================================================
    11. 响应式（≤720px 平板；≤480px 手机）
    ============================================================ */
 @media (max-width: 720px) {
@@ -1448,6 +2295,20 @@ code.path {
 
   <!-- ============ 状态 ============ -->
   <section class="panel active" id="panel-status" role="tabpanel" aria-labelledby="tab-status" tabindex="-1">
+    <!-- v1.3 新增：自动升级横幅（默认 hidden，由 JS 按 state 控制显隐） -->
+    <div id="update-banner" class="update-banner" hidden>
+      <div class="update-banner-icon" id="update-banner-icon" aria-hidden="true">⬆</div>
+      <div class="update-banner-body">
+        <div class="update-banner-title" id="update-banner-title">检查更新...</div>
+        <div class="update-banner-desc" id="update-banner-desc"></div>
+        <div class="update-progress" id="update-progress" hidden>
+          <div class="update-progress-bar" id="update-progress-bar" style="width:0%"></div>
+        </div>
+      </div>
+      <button class="update-banner-action" id="update-banner-action" type="button" hidden></button>
+      <button class="update-banner-dismiss" id="update-banner-dismiss" type="button" aria-label="关闭横幅">✕</button>
+    </div>
+
     <div class="grid">
       <article class="card kpi" id="card-net">
         <div class="kpi-label">网络可达性</div>
@@ -1586,6 +2447,24 @@ code.path {
         <div class="hint">每次检查等待校园网可达的最长时间，10-300 秒</div>
         <div class="err" id="err-timeout" role="alert"></div>
       </div>
+      <!-- v1.3 新增：自动升级字段 -->
+      <div class="field">
+        <label class="switch" for="cfg-auto-update-enabled">
+          <input type="checkbox" id="cfg-auto-update-enabled">
+          <span class="track" aria-hidden="true"></span>
+          <span class="switch-label">启用自动升级（GitHub 检测）</span>
+        </label>
+        <div class="hint">关闭后仅在启动时与手动点击时检查 GitHub 新版</div>
+      </div>
+      <div class="field">
+        <label for="cfg-update-interval">自动升级检查间隔</label>
+        <select id="cfg-update-interval">
+          <option value="6">6 小时</option>
+          <option value="12">12 小时</option>
+          <option value="24">24 小时</option>
+        </select>
+        <div class="hint">服务会定期访问 GitHub API 检查新版（未认证 60 req/h）</div>
+      </div>
     </div>
 
     <div class="card section">
@@ -1674,6 +2553,8 @@ code.path {
       <div class="btn-row">
         <button class="btn btn-secondary" id="btn-restart" type="button">🔁 重启服务</button>
         <button class="btn btn-danger" id="btn-uninstall" type="button">🗑 卸载服务</button>
+        <!-- v1.3 新增：升级历史按钮 -->
+        <button class="btn btn-secondary" id="btn-update-history" type="button">📜 查看升级历史</button>
       </div>
       <p class="hint" id="admin-hint" style="margin-top:14px;"></p>
     </div>
@@ -1681,6 +2562,53 @@ code.path {
 </main>
 
 <div class="toasts" id="toasts" role="region" aria-live="polite" aria-label="通知"></div>
+
+<!-- v1.3 新增：升级历史弹窗（默认隐藏，由 JS 控制） -->
+<div id="update-history-modal" class="update-modal" hidden role="dialog" aria-modal="true" aria-labelledby="update-history-title">
+  <div class="update-modal-backdrop" id="update-history-backdrop"></div>
+  <div class="update-modal-card card">
+    <div class="section-head" style="display:flex;align-items:center;justify-content:space-between;gap:12px;">
+      <h2 class="section-title" id="update-history-title">📜 升级历史</h2>
+      <button class="icon-btn" id="update-history-close" type="button" aria-label="关闭">✕</button>
+    </div>
+    <p class="hint" id="update-history-path" style="margin:0 0 10px;"></p>
+    <pre class="update-modal-log" id="update-history-log">加载中…</pre>
+    <div class="btn-row" style="margin-top:14px;justify-content:flex-end;">
+      <button class="btn btn-secondary" id="update-history-refresh" type="button">🔄 刷新</button>
+      <button class="btn" id="update-history-close-btn" type="button">关闭</button>
+    </div>
+  </div>
+</div>
+
+<style>
+/* 升级历史弹窗（v1.3 新增；放在 body 末尾避免影响其他 CSS） */
+.update-modal {
+  position: fixed; inset: 0; z-index: 200;
+  display: flex; align-items: center; justify-content: center;
+  padding: 24px;
+}
+.update-modal[hidden] { display: none; }
+.update-modal-backdrop {
+  position: absolute; inset: 0;
+  background: rgba(15, 23, 42, 0.55);
+  animation: panelFadeIn 0.2s ease;
+}
+.update-modal-card {
+  position: relative; z-index: 1;
+  width: min(720px, 100%); max-height: 80vh;
+  display: flex; flex-direction: column;
+  background: var(--surface);
+}
+.update-modal-log {
+  flex: 1 1 auto; min-height: 280px; max-height: 60vh; overflow: auto;
+  background: var(--log-bg); color: var(--log-text);
+  border: 1px solid var(--border); border-radius: var(--radius-sm);
+  padding: 14px 16px;
+  font-family: "Cascadia Mono", "JetBrains Mono", "Consolas", monospace;
+  font-size: 12.5px; line-height: 1.65; white-space: pre-wrap; word-break: break-all;
+  margin: 0;
+}
+</style>
 
 <script>
 (function () {
@@ -2316,9 +3244,11 @@ code.path {
     bindConfig();
     bindLog();
     bindAbout();
+    bindUpdate();
 
     startStatusPolling();
     startLogPolling();
+    startUpdatePolling();
     loadAbout();
 
     setInterval(tickCountdown, 1000);
@@ -2328,9 +3258,200 @@ code.path {
     }, 1000);
 
     document.addEventListener('visibilitychange', function () {
-      if (!document.hidden) { pollStatus(); fetchLog(false); }
+      if (!document.hidden) { pollStatus(); fetchLog(false); pollUpdate(); }
     });
   }
+
+  /* ============================================================
+     分区 7/7 · 自动升级（v1.3 新增）— 状态轮询 / 横幅渲染 / 按钮
+     ============================================================ */
+  var updateTimer = null;
+  var updateStateCache = null;
+  var updateSuccessHideAt = 0;
+  var POLL_UPDATE_MS = 5000;
+
+  function getUpdateJson(url) {
+    return fetch(url, { cache: 'no-store' }).then(function (r) { return r.json(); });
+  }
+  function postUpdateJson(url, body) {
+    var opt = { method: 'POST', cache: 'no-store', headers: { 'Content-Type': 'application/json' } };
+    if (body !== undefined) opt.body = JSON.stringify(body);
+    return fetch(url, opt).then(function (r) { return r.json(); });
+  }
+
+  function renderUpdateBanner(data) {
+    var banner = $('update-banner');
+    if (!banner) return;
+    var state = data && data.state;
+    if (!state) {
+      banner.hidden = true;
+      return;
+    }
+    banner.hidden = false;
+    banner.classList.remove('warn', 'error', 'success');
+    var icon = $('update-banner-icon');
+    var title = $('update-banner-title');
+    var desc = $('update-banner-desc');
+    var progress = $('update-progress');
+    var pbar = $('update-progress-bar');
+    var action = $('update-banner-action');
+    action.hidden = true;
+    progress.hidden = true;
+
+    var ver = data.target_version || data.latest_version || '';
+    var verStr = ver ? 'v' + ver : '';
+
+    if (state === 'downloading') {
+      banner.classList.add('warn');
+      icon.textContent = '⬇';
+      title.textContent = '正在下载新版本 ' + verStr;
+      desc.textContent = data.progress_message || ('下载完成后将自动升级，服务将短暂中断约 60 秒');
+      progress.hidden = false;
+      pbar.style.width = (data.progress_pct || 0) + '%';
+    } else if (state === 'checking') {
+      icon.textContent = '🔍';
+      title.textContent = '正在检查更新';
+      desc.textContent = data.progress_message || '正在访问 GitHub API...';
+    } else if (state === 'upgrading') {
+      banner.classList.add('error');
+      icon.textContent = '⚙';
+      title.textContent = '正在升级到 ' + verStr;
+      desc.textContent = data.progress_message || '请稍候（约 60 秒）...';
+    } else if (state === 'success') {
+      banner.classList.add('success');
+      icon.textContent = '✅';
+      title.textContent = '已升级到 ' + verStr;
+      desc.textContent = data.progress_message || ('升级成功（' + fmtTimeOnly(data.last_check_at) + '）');
+      action.hidden = false;
+      action.textContent = '知道了';
+      // 7 秒后自动隐藏（也由 5 分钟服务端清理兜底）
+      updateSuccessHideAt = Date.now() + 7000;
+    } else if (state === 'error') {
+      banner.classList.add('error');
+      icon.textContent = '❌';
+      title.textContent = '升级失败';
+      desc.textContent = data.progress_message || data.last_error || '未知错误';
+      action.hidden = false;
+      action.textContent = '查看详情';
+    } else {
+      banner.hidden = true;
+    }
+  }
+
+  function pollUpdate() {
+    if (document.hidden) return;
+    getUpdateJson('/api/update/status').then(function (r) {
+      if (!r || typeof r !== 'object') return;
+      updateStateCache = r;
+      renderUpdateBanner(r);
+      // 7 秒后自动隐藏绿 banner（前端兜底）
+      if (r.state === 'success' && updateSuccessHideAt && Date.now() > updateSuccessHideAt) {
+        banner.hidden = true;
+      }
+    }).catch(function () { /* 静默：升级状态非关键 */ });
+  }
+
+  function startUpdatePolling() {
+    if (updateTimer) return;
+    pollUpdate();
+    updateTimer = setInterval(pollUpdate, POLL_UPDATE_MS);
+  }
+
+  function bindUpdate() {
+    // 关闭按钮（仅 success / error 时有效）
+    var dismiss = $('update-banner-dismiss');
+    if (dismiss) dismiss.addEventListener('click', function () {
+      var b = $('update-banner'); if (b) b.hidden = true;
+    });
+    // 横幅 action 按钮（success=知道了 → 隐藏；error=查看详情 → 打开历史弹窗）
+    var action = $('update-banner-action');
+    if (action) action.addEventListener('click', function () {
+      var s = updateStateCache && updateStateCache.state;
+      if (s === 'success') {
+        var b = $('update-banner'); if (b) b.hidden = true;
+      } else if (s === 'error') {
+        openUpdateHistoryModal();
+      }
+    });
+    // 升级历史按钮（关于面板）
+    var btnHistory = $('btn-update-history');
+    if (btnHistory) btnHistory.addEventListener('click', openUpdateHistoryModal);
+    // 弹窗关闭
+    var modalClose = $('update-history-close');
+    var modalCloseBtn = $('update-history-close-btn');
+    var backdrop = $('update-history-backdrop');
+    function _closeModal() {
+      var m = $('update-history-modal'); if (m) m.hidden = true;
+    }
+    if (modalClose) modalClose.addEventListener('click', _closeModal);
+    if (modalCloseBtn) modalCloseBtn.addEventListener('click', _closeModal);
+    if (backdrop) backdrop.addEventListener('click', _closeModal);
+    // 弹窗刷新
+    var refreshBtn = $('update-history-refresh');
+    if (refreshBtn) refreshBtn.addEventListener('click', function () {
+      loadUpdateHistoryLines();
+    });
+    // ESC 关闭弹窗
+    document.addEventListener('keydown', function (ev) {
+      if (ev.key === 'Escape') {
+        var m = $('update-history-modal');
+        if (m && !m.hidden) m.hidden = true;
+      }
+    });
+  }
+
+  function loadUpdateHistoryLines() {
+    var log = $('update-history-log');
+    if (log) log.textContent = '加载中…';
+    return getUpdateJson('/api/update/history').then(function (r) {
+      if (!r || typeof r !== 'object') {
+        if (log) log.textContent = '加载失败';
+        return;
+      }
+      if (r.path) {
+        var p = $('update-history-path');
+        if (p) p.textContent = '日志路径：' + r.path;
+      }
+      var lines = r.lines || [];
+      if (log) {
+        log.textContent = lines.length ? lines.join('\n') : '（暂无升级日志）';
+        log.scrollTop = log.scrollHeight;
+      }
+    }).catch(function () {
+      if (log) log.textContent = '加载失败，请稍后重试';
+    });
+  }
+
+  function openUpdateHistoryModal() {
+    var m = $('update-history-modal'); if (!m) return;
+    m.hidden = false;
+    loadUpdateHistoryLines();
+  }
+
+  /* —— 把升级字段纳入 loadConfig / collectConfig —— */
+  /* 复用原 loadConfig（已读 /api/config + 填好所有原表单），在它的 .then 末尾再补两项新字段。
+     不再发额外的 /api/config 请求。 */
+  var _origLoadConfig = loadConfig;
+  loadConfig = function () {
+    return _origLoadConfig().then(function () {
+      return API.config().then(function (c) {
+        if (!c || typeof c !== 'object') return;
+        var au = $('cfg-auto-update-enabled');
+        if (au) au.checked = !!c.auto_update_enabled;
+        var iv = $('cfg-update-interval');
+        if (iv) iv.value = String(c.update_check_interval_hours || 6);
+      }).catch(function () { /* 配置页：忽略二次拉取失败 */ });
+    });
+  };
+
+  var _origCollectConfig = collectConfig;
+  collectConfig = function () {
+    var cfg = _origCollectConfig();
+    cfg.auto_update_enabled = !!(($('cfg-auto-update-enabled') || {}).checked);
+    var iv = parseInt(($('cfg-update-interval') || {}).value, 10);
+    cfg.update_check_interval_hours = (iv === 12 || iv === 24) ? iv : 6;
+    return cfg;
+  };
 
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot);
   else boot();
@@ -2377,14 +3498,24 @@ def main():
     if hasattr(signal, "SIGBREAK"):
         signal.signal(signal.SIGBREAK, _on_signal)
 
-    # 4. 启动后台线程
+    # 4. 启动钩子：检查是否刚升级过（必须在后台线程之前跑）
+    try:
+        _post_upgrade_startup()
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("启动钩子异常: %s", exc)
+
+    # 5. 启动后台线程
     startup_thread = threading.Thread(target=_startup_trigger, name="startup-trigger", daemon=True)
     startup_thread.start()
 
     periodic_thread = threading.Thread(target=run_periodic, name="periodic-check", daemon=True)
     periodic_thread.start()
 
-    # 5. 启动 Web 服务器（主线程阻塞）
+    # —— 自动升级后台线程（v1.3 新增）——
+    auto_update_thread = threading.Thread(target=_auto_update_loop, name="auto-update", daemon=True)
+    auto_update_thread.start()
+
+    # 6. 启动 Web 服务器（主线程阻塞）
     ui_port = cfg.get("ui_port", 8848)
     try:
         HTTP_SERVER = ThreadingHTTPServer(("127.0.0.1", ui_port), _Handler)
@@ -2403,7 +3534,7 @@ def main():
         STOP_EVENT.set()
         logger.info("HTTP server 已停止，等待后台线程退出...")
         # 等所有线程最多 3 秒
-        for t in (startup_thread, periodic_thread):
+        for t in (startup_thread, periodic_thread, auto_update_thread):
             t.join(timeout=3)
         logger.info("服务退出")
     return 0
