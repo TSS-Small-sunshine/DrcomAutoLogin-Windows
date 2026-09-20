@@ -1063,7 +1063,7 @@ a { color: var(--primary); }
    5. 面板 / 卡片 / KPI
    ============================================================ */
 .panel { display: none; }
-.panel.active { display: block; animation: fade 0.18s ease; }
+.panel.active { display: block; opacity: 1; animation: fade 0.18s ease; }
 @keyframes fade { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
 .grid { display: grid; gap: 14px; grid-template-columns: repeat(auto-fit, minmax(228px, 1fr)); }
 .card {
