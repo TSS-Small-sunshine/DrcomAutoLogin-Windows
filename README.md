@@ -1,0 +1,305 @@
+# Dr.COM 校园网自动登录（Windows 版）
+
+Windows 版校园网认证网关自动登录工具：开机自启 + 周期自检 + 智能离线识别 + Web UI 图形化配置。
+
+---
+
+## ⚠️ 适用范围声明（请先读这里）
+
+> **❗ 本项目全部实测验证均在「福建农业职业技术学院」校园网环境下完成。**
+>
+> 下面这些默认值都是**在该校环境实测**得出的，不是通用值：
+>
+> - 默认认证网关 `172.16.80.3`
+> - 认证端口：`80`（在线状态探测） / `801`（登录提交）
+> - 运营商账号后缀规则：不带后缀（校园网）/ `@yd`（移动）/ `@dx`（电信）/ `@lt`（联通）
+> - 登录接口路径 `/eportal/portal/login`、在线查询接口路径 `/drcom/chkstatus`
+>
+> **其它学校的网关地址、端口、接口路径、参数规则大概率不一样。**
+> 换学校请自行抓包 / 查认证页面源码确认后修改 `config.json`，**本项目不保证可用**。
+> 若接口路径不同，还需要修改 `联网_service.py` 中的接口地址。
+
+---
+
+## 功能特性
+
+- **开机自动登录**：以 Windows 系统服务（NSSM）托管，系统启动时自动触发一次认证
+- **Web UI 配置界面**：浏览器打开 `http://127.0.0.1:8848`，不用改源码、不用记配置项就能改账号 / 密码 / 间隔
+- **周期自检 + 智能离线识别**：定时检测在线状态；不在校园网时静默跳过，失败后指数退避 `5 → 10 → 20 → 40 → 60` 分钟封顶
+- **密码与代码分离**：密码只存在 `password.txt` 中，源码内**零硬编码凭据**
+- **零第三方 Python 依赖**：全部使用 Python 标准库，受限网络环境也能跑
+- **一键安装 / 一键卸载**：`install.bat` / `uninstall.bat` 全程自动
+- **可选打包安装程序**：用 Inno Setup 6 打成 `.exe` 安装向导（`packaging\build.bat`）
+
+---
+
+## 技术栈
+
+| 分类 | 技术 / 版本 | 说明 |
+| --- | --- | --- |
+| 运行环境 | **Python 3**（实测 3.14）、Windows 10 / 11 x64 | 需要 `python.exe` 在 PATH 中，或装在 `C:\Python314\` |
+| 依赖 | **Python 标准库，零第三方包** | `urllib` / `json` / `socket` / `http.server` / `threading` / `logging` |
+| Web UI | `http.server`（stdlib）+ 内联 HTML / CSS / JS | 单文件内嵌页面，**无 CDN、无外部资源**，离线可用 |
+| 服务托管 | **NSSM 2.24** | 由 `install.bat` 自动下载到 `tools\nssm.exe`，**不入库** |
+| 打包（可选） | **Inno Setup 6** | `packaging\build.bat` 一键构建，产物在 `packaging\output\` |
+
+> **不依赖**：Node.js、pip 包、外部数据库、任何在线 CDN。
+
+---
+
+## 架构说明
+
+### 内部模块（`联网_service.py`）
+
+| 区块 | 关键符号 | 职责 |
+| --- | --- | --- |
+| 常量与路径 | `VERSION`、`DEFAULT_CONFIG`、`BASE_DIR`、`CONFIG_FILE`、`PASSWORD_FILE`、`LOG_FILE` | 版本号、默认配置、文件位置解析（全部相对脚本目录） |
+| 配置读写 | `_load_config`、`_validate_config`、`_save_config` | 读 `config.json`，缺失/损坏时自动生成默认值并校验合法性 |
+| 密码管理 | `_load_password_from_disk`、`_get_password`、`_save_password_to_disk` | 从 `password.txt` 读取密码，仅存内存 + 文件，**不写日志、不回传 API** |
+| 运行状态 | `STATE`、`BACKOFF`、`_set_state`、`_snapshot_state`、`_set_backoff`、`_reset_backoff` | 线程间共享状态（带锁）与退避计数 |
+| 网络探测 | `wait_network`、`discover_network` | 等网关可达；获取用于登录表单的本机 IP / MAC |
+| 认证协议 | `is_online`、`login` | 查询在线状态（chkstatus）、提交登录（eportal） |
+| 调度 | `run_once`、`_startup_trigger`、`run_periodic` | 一次完整「等网络 → 查在线 → 登录」，以及启动触发 / 周期触发 |
+| Web API | `api_get_status`、`api_get_config`、`api_post_config`、`api_post_password`、`api_post_login`、`api_get_log_tail`、`api_get_log_download`、`api_get_about`、`api_post_restart` | 供页面调用的 JSON 接口 |
+| HTTP 服务 | `_Handler`(`BaseHTTPRequestHandler`)、`main()` | 静态页面 + API 路由，主线程阻塞在 `serve_forever()` |
+
+### 线程模型
+
+```
+Windows 服务（NSSM）启动
+        │
+        ├── 线程 A：startup-trigger  ── 等待 3 秒 ──► run_once("startup")
+        ├── 线程 B：periodic-check   ── 按自检间隔 ─► run_once("periodic")
+        └── 主线程：HTTP Server 监听 127.0.0.1:8848
+                        ▲
+                        └── 浏览器 Web UI / 手动「立即登录」 ──► run_once("manual")
+```
+
+### 一次检查的执行流程
+
+```
+run_once(原因)
+   │
+   ├─ 1. 读取 config.json（每次实时读，改配置无需重启）
+   ├─ 2. wait_network：每 2 秒探测 网关:端口，最长 network_wait_timeout_sec 秒
+   │         └─ 超时不可达 → 判定「不在校园网」→ 静默返回，不计失败
+   ├─ 3. is_online：GET /drcom/chkstatus 查在线状态
+   │         ├─ 已在线   → 重置退避，结束
+   │         └─ 未在线   → 继续
+   └─ 4. login：POST 账号+密码 到 /eportal/portal/login
+             ├─ 成功 → 记录 last_login_at，重置退避
+             └─ 失败 → 记录 ERROR，进入指数退避
+```
+
+### 状态与退避
+
+| 项 | 说明 |
+| --- | --- |
+| 退避档位 | `5 → 10 → 20 → 40 → 60` 分钟（`BACKOFF_LEVELS`），60 分钟封顶 |
+| 触发条件 | 登录失败或连续检测异常 |
+| 重置条件 | 检测到已在线 / 登录成功 |
+| 实际等待 | `max(自检间隔, 剩余退避时间)`，Web UI「状态」页显示「下次检查」倒计时 |
+| 离线静默 | 网关完全不可达时视为「不在校园网」，不刷错误、不拉长退避 |
+
+### 数据与持久化
+
+| 内容 | 位置 | 说明 |
+| --- | --- | --- |
+| 配置 | `<脚本目录>\config.json` | 缺失时自动生成默认值 |
+| 密码 | `<脚本目录>\password.txt` | UTF-8 单行纯文本，需自行创建 |
+| 业务日志 | `<脚本目录>\logs\campus_login.log` | 认证过程日志，持续追加**不自动轮转**，可随时手动清理 |
+| 服务输出 | `<脚本目录>\logs\service_stdout.log` / `service_stderr.log` | NSSM 捕获的标准输出 / 错误，1 MB 轮转 |
+
+---
+
+## 认证协议
+
+> 以下接口为**福建农业职业技术学院**实测结果，其它学校请自行确认。
+
+### ① 查询在线状态
+
+```
+GET http://{HOST}/drcom/chkstatus?callback=cb&jsVersion=4.X     （端口 80）
+```
+
+- 响应为 **JSONP**：`cb({"result":1,"uid":"...","AC":"...","oltime":N,...})`
+- `result == 1` → **已在线**；`result == 0` → 未在线
+
+### ② 提交登录
+
+```
+GET http://{HOST}:801/eportal/portal/login?callback=dr{随机数}&login_method=1
+    &user_account={账号}{后缀}&user_password={密码}
+    &wlan_user_ip=..&wlan_user_ipv6=&wlan_user_mac=..
+    &wlan_ac_ip=..&wlan_ac_name=..
+    &jsVersion=4.1.3&lang=zh-cn&v={随机数}
+```
+
+- 响应为 **JSONP**：`dr{随机数}({"result":1,"msg":"...","ret_code":0})`
+- `result == 1` → **登录成功**；否则 `msg` 字段为失败原因
+
+### ③ 参数取值优先级（踩过坑的地方）
+
+登录表单里的 `wlan_user_ip` / `wlan_user_mac` / `wlan_ac_ip` / `wlan_ac_name` **不能乱填**，该校门户脚本 `a41.js` 使用如下降级链（依次尝试，取第一个可用值）：
+
+| 参数 | 取值优先级 |
+| --- | --- |
+| `wlan_user_ip` | 认证页重定向 URL 的 `wlanuserip` → `chkstatus` 响应的 `v46ip` → `ss5` → `v4ip` → `hex16ToString(ss3)` → 本机网卡 IP |
+| `wlan_user_mac` | 认证页重定向 URL 的 `mac` → `chkstatus` 响应的 `ss4` → `olmac` → 占位常量 `000000000000` |
+| `wlan_ac_ip` / `wlan_ac_name` | 认证页重定向 URL 的 `wlanacip` / `wlancname` |
+
+> **本 Windows 版当前实现的简化版**（`discover_network()`）：
+> 从 `chkstatus` 响应取 `v4ip` 作 `wlan_user_ip`，取 `olmac` 作 `wlan_user_mac`（做去 `:` / `-` 并转大写），
+> `v4ip` 缺失时回退到 UDP `connect` 探测出的本机网卡 IP；
+> `wlan_ac_ip` / `wlan_ac_name` 目前**发送空字符串**（`""`），该校网关对此接受。
+> 若你在其它学校环境遇到登录被拒，优先按上表补齐这些参数。
+
+### ④ 关于「重定向」
+
+未认证时，网关通常会**把普通 HTTP 请求 302 重定向到认证页**（认证页 URL 上会带 `wlanuserip` / `mac` / `wlanacip` 等查询参数）。
+浏览器里看到的就是那个页面；本项目的做法是**直接按上面的接口规则发请求**，不解析重定向 HTML，因此更稳定、更快。
+
+---
+
+## 目录结构
+
+```
+DrcomAutoLogin-Windows/
+├── 联网_service.py            # 主程序：认证调度 + Web UI（Python 标准库，单文件）
+├── install.bat                # 一键安装：注册并启动 Windows 服务
+├── uninstall.bat              # 一键卸载：停止并移除服务
+├── README.md                  # 本文件
+├── LICENSE                    # MIT 许可证
+├── .gitignore                 # 排除凭据 / 运行数据 / 构建产物
+└── packaging/                 # 【可选】打包成安装程序
+    ├── build.bat              # 构建入口（双击运行）
+    ├── build.ps1              # 构建逻辑（自动准备 NSSM / Inno Setup）
+    ├── setup.iss              # Inno Setup 6 脚本
+    ├── LICENSE.txt            # 安装包内附的许可证
+    ├── config.json.template   # 默认配置模板（安装时复制为 config.json）
+    ├── password.txt.template  # 密码文件占位模板（安装时复制为 password.txt）
+    └── README.md              # 打包与安装包使用说明
+```
+
+> 运行时才会生成、**不在仓库中**：`config.json`、`password.txt`、`logs\`、`tools\`（NSSM）、`packaging\output\`。
+
+---
+
+## 快速开始
+
+### 路径 A：一键安装（推荐）
+
+1. **确认已安装 Python 3**（实测 3.14），命令行执行 `python --version` 能看到版本号
+2. **以管理员身份**双击 `install.bat`（脚本会自动请求提权）
+3. 脚本会自动完成：
+   - 下载 NSSM 2.24 到 `tools\nssm.exe`（已存在则跳过）
+   - 注册并启动 Windows 服务 `DrcomAutoLogin`
+   - 在桌面和开始菜单创建「Dr.COM 配置」快捷方式
+4. 打开浏览器访问 **`http://127.0.0.1:8848`**
+5. 在「配置」标签页填入**账号**，选择**运营商后缀**，点「修改密码」设置密码，最后点「💾 保存配置」
+6. 回到「状态」标签页点「🔄 立即登录」验证；成功后开机将自动登录
+
+### 路径 B：打包成安装程序（可选）
+
+1. 安装 **Inno Setup 6**（`build.bat` 会检测，缺失时可自动下载安装）
+2. 双击运行 `packaging\build.bat`（会自动准备 NSSM 并调用 `ISCC.exe` 编译）
+3. 构建产物：`packaging\output\DrcomAutoLogin-Setup-v2.1.exe`
+4. 把该 `.exe` 发给用户，双击即按向导安装（可勾选「创建桌面快捷方式」「安装后立即启动服务」）
+
+---
+
+## Web UI 说明
+
+浏览器打开 `http://127.0.0.1:8848`，共 4 个标签页：
+
+| 标签 | 用途 |
+| --- | --- |
+| 📊 **状态** | 查看「网关是否可达 / 是否在线 / 上次登录时间与结果 / 下次检查倒计时」；提供「🔄 立即登录」手动触发一次认证 |
+| ⚙️ **配置** | 修改守护网关、账号、运营商后缀、自检开关与间隔、网络等待超时、UI 端口；点「💾 保存配置」立即生效（UI 端口需重启服务）。另有「修改密码」按钮单独改密码 |
+| 📝 **日志** | 实时查看 `campus_login.log` 尾部，支持关键字过滤、自动滚动、下载完整日志 |
+| ℹ️ **关于** | 显示程序版本、服务启动时间与运行时长、配置 / 密码 / 日志文件位置；提供「🔁 重启服务」与「🗑 卸载服务」提示 |
+
+---
+
+## 配置文件说明
+
+`config.json`（与 `联网_service.py` 同目录；缺失或损坏时自动生成默认值）：
+
+| 字段 | 类型 | 默认值 | 说明 |
+| --- | --- | --- | --- |
+| `host` | 字符串 | `"172.16.80.3"` | 认证网关地址（**换学校必须改**） |
+| `port` | 整数 | `80` | 在线状态探测端口，取值范围 `1-65535` |
+| `account` | 字符串 | `""` | 校园网账号（**纯数字**，不含运营商后缀） |
+| `suffix` | 字符串 | `""` | 运营商后缀，只能是 `""` / `"@yd"` / `"@dx"` / `"@lt"` |
+| `auto_check_enabled` | 布尔 | `true` | 是否启用周期自检 |
+| `auto_check_interval_min` | 整数 | `30` | 自检间隔（分钟），只能是 `5` / `15` / `30` / `60` / `120` |
+| `network_wait_timeout_sec` | 整数 | `60` | 每次检查前等待网关可达的最长秒数，取值范围 `10-300` |
+| `ui_port` | 整数 | `8848` | Web UI 监听端口，取值范围 `1024-65535`（**修改后需重启服务**） |
+
+> 以上字段在保存时都会经过校验，非法值会被拒绝并给出提示。
+
+---
+
+## 常见问题
+
+**Q1：服务起不来 / 装了但没反应？**
+看 `logs\service_stderr.log`。最常见原因是 Python 不在 PATH：命令行执行 `python --version` 验证，或把 Python 装到 `C:\Python314\`。装完可用管理员运行 `tools\nssm.exe restart DrcomAutoLogin`。
+
+**Q2：日志一直显示「网关不可达」？**
+说明当前不在校园网内，或被分到了别的网段。确认已连上校园网 Wi-Fi / 网线，并核对 `config.json` 的 `host` 是否为所在学校的网关地址（本项目默认值是**福建农业职业技术学院**的 `172.16.80.3`）。
+
+**Q3：提示登录失败？**
+依次检查：账号是否为纯数字（后缀单独在 `suffix` 里选）；密码是否正确；运营商后缀是否选对（移动 `@yd` / 电信 `@dx` / 联通 `@lt`，校内网选空）；最后看 `logs\campus_login.log` 里的 `ERROR` 行，失败原因会写在接口返回的 `msg` 里。
+
+**Q4：Web UI 打不开（`http://127.0.0.1:8848`）？**
+先确认服务在运行（`tools\nssm.exe status DrcomAutoLogin`）。若 `8848` 被别的程序占用，改 `config.json` 的 `ui_port` 或卸载重装后改端口，然后**重启服务**。注意 Web UI 只监听本机，手机等其它设备访问不了。
+
+**Q5：怎么改密码？**
+Web UI →「配置」标签页 → 点「修改密码」→ 输入新密码保存。也可直接编辑 `password.txt`（UTF-8 单行，前后不要空格）后重启服务。
+
+**Q6：怎么卸载？**
+- **脚本方式**：管理员运行 `uninstall.bat`。它会停止并移除 Windows 服务、删除桌面与开始菜单快捷方式；随后**询问**是否一并删除 `config.json`、`password.txt` 与 `logs\`（**默认保留**，直接回车即保留）。注意 `tools\`（NSSM）不会被自动删除，需要彻底清理可手动删掉整个目录。
+- **安装包方式**：走「控制面板 → 程序和功能」卸载，或开始菜单里的卸载入口。它会停止并移除服务，并清理 `logs\` 与 `tools\`，但**保留** `config.json` 与 `password.txt`。
+
+---
+
+## 安全说明
+
+- **密码只在 `password.txt`**：UTF-8 编码的单行纯文本文件，与其它配置分离；源码中**没有任何硬编码凭据**
+- **凭据不入库**：`password.txt` 与 `config.json` 均已写入 `.gitignore`，不会被提交到仓库
+- **需自行创建 `password.txt`**：本仓库不含该文件，请在使用前于脚本目录下自行创建并写入密码
+- **Web UI 只监听 `127.0.0.1`**：不对局域网 / 外网开放，其它设备无法访问
+- **接口不返回密码**：状态接口只返回 `password_status`（`set` / `missing`），永不返回密码原文
+- **日志脱敏**：密码不写入任何日志文件；`config.json` 也不保存密码
+- **权限建议**：`password.txt` 所在目录建议只授予当前用户访问权限（服务以系统账户运行，注意共享机器的风险）
+
+---
+
+## 免责声明
+
+本项目**仅供个人学习研究，以及为本人自有账号提供正常上网认证便利**。使用时请遵守所在学校的网络管理规定与相关法律法规；请勿用于批量爆破、代他人认证、绕过计费或任何破坏校园网秩序的行为。因使用本项目产生的一切后果由使用者自行承担。
+
+---
+
+## 文档索引
+
+| 文档 | 内容 |
+| --- | --- |
+| 本 `README.md` | 功能、架构、协议、快速开始、常见问题 |
+| [`packaging/README.md`](packaging/README.md) | 开发者构建安装包的步骤、终端用户安装 / 卸载流程、安装包目录结构、已知限制 |
+| [`LICENSE`](LICENSE) | MIT 许可证 |
+
+---
+
+## 版本记录
+
+| 版本 | 说明 |
+| --- | --- |
+| **v1.0** | 首个公开发布版本。Windows 校园网自动登录：NSSM 服务托管、Web UI 配置、周期自检与指数退避、一键安装 / 卸载、可选 Inno Setup 打包。 |
+
+> **版本号对应关系（避免混淆）**：
+> - 脚本内部常量 `VERSION = "2.0"` 是 **Web UI 配置版的内部代号**（由「命令行脚本 → Web UI 版」的迭代历史沿用而来），显示在日志与「关于」页；
+> - Inno Setup 安装包内部版本为 `2.1`；
+> - **GitHub Release 标签为 `v1.0`**，代表本项目的**首次公开发布**。
+>
+> 三者含义不同：`2.0` / `2.1` 是早期内部迭代版本号，`v1.0` 是面向公众的发布标签。后续公开版本将从 `v1.1` 起递增。

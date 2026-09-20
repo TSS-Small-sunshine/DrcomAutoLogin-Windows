@@ -1,0 +1,10 @@
+﻿{
+  "host": "172.16.80.3",
+  "port": 80,
+  "account": "",
+  "suffix": "",
+  "auto_check_enabled": true,
+  "auto_check_interval_min": 30,
+  "network_wait_timeout_sec": 60,
+  "ui_port": 8848
+}

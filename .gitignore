@@ -1,0 +1,30 @@
+# ---- 运行时凭据（绝不入库）----
+password.txt
+config.json
+
+# ---- 运行时数据 ----
+logs/
+
+# ---- 构建产物 ----
+packaging/output/
+packaging/build.log
+tools/
+build.log
+
+# ---- Python ----
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+# ---- 其它产物 ----
+*.apk
+*.exe
+*.zip
+
+# ---- 编辑器/系统 ----
+.vscode/
+.idea/
+Thumbs.db
+desktop.ini
