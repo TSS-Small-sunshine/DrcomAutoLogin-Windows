@@ -1503,22 +1503,10 @@ code.path {
 
   <!-- ============ 配置 ============ -->
   <section class="panel" id="panel-config" role="tabpanel" aria-labelledby="tab-config" tabindex="-1">
-    <div class="card section">
+    <div class="card section" id="card-password">
       <div class="section-head">
-        <h2 class="section-title">认证服务器</h2>
-        <p class="section-desc" style="margin:0;">校园网认证网关参数，账号与运营商后缀会拼接为登录用户名。</p>
-      </div>
-      <div class="field">
-        <label for="cfg-host">认证服务器地址</label>
-        <input type="text" id="cfg-host" class="cfg-lg" placeholder="例如 172.16.80.3" autocomplete="off" spellcheck="false">
-        <div class="hint">认证网关的 IP 或域名</div>
-        <div class="err" id="err-host" role="alert"></div>
-      </div>
-      <div class="field">
-        <label for="cfg-port">认证端口</label>
-        <input type="number" id="cfg-port" class="cfg-lg" min="1" max="65535" step="1" inputmode="numeric">
-        <div class="hint">取值 1-65535，通常为 80</div>
-        <div class="err" id="err-port" role="alert"></div>
+        <h2 class="section-title">账户与登录密码 <span class="badge badge-muted" id="pwd-badge">状态未知</span></h2>
+        <p class="section-desc" style="margin:0;">账号 + 运营商 + 密码构成本机登录校园网的完整凭据。密码仅保存于本机 password.txt，保存后立即生效，无需重启。</p>
       </div>
       <div class="field">
         <label for="cfg-account">账号</label>
@@ -1535,6 +1523,36 @@ code.path {
           <option value="@lt">中国联通 @lt</option>
         </select>
         <div class="hint">宽带运营商不同，认证域名后缀也不同</div>
+      </div>
+      <div class="field">
+        <label for="pwd-new">账户登录密码</label>
+        <input type="password" id="pwd-new" autocomplete="new-password">
+        <div class="hint">至少 1 个字符</div>
+      </div>
+      <div class="field">
+        <label for="pwd-confirm">再次输入账户登录密码</label>
+        <input type="password" id="pwd-confirm" autocomplete="new-password">
+        <div class="err" id="err-pwd" role="alert"></div>
+      </div>
+      <button class="btn btn-secondary" id="btn-save-pwd" type="button">🔑 保存账户登录密码</button>
+    </div>
+
+    <div class="card section">
+      <div class="section-head">
+        <h2 class="section-title">认证服务器</h2>
+        <p class="section-desc" style="margin:0;">校园网认证网关地址与端口。</p>
+      </div>
+      <div class="field">
+        <label for="cfg-host">认证服务器地址</label>
+        <input type="text" id="cfg-host" class="cfg-lg" placeholder="例如 172.16.80.3" autocomplete="off" spellcheck="false">
+        <div class="hint">认证网关的 IP 或域名</div>
+        <div class="err" id="err-host" role="alert"></div>
+      </div>
+      <div class="field">
+        <label for="cfg-port">认证端口</label>
+        <input type="number" id="cfg-port" class="cfg-lg" min="1" max="65535" step="1" inputmode="numeric">
+        <div class="hint">取值 1-65535，通常为 80</div>
+        <div class="err" id="err-port" role="alert"></div>
       </div>
     </div>
 
@@ -1581,24 +1599,6 @@ code.path {
         <div class="hint">取值 1024-65535，仅监听 127.0.0.1，默认 8848</div>
         <div class="err" id="err-ui-port" role="alert"></div>
       </div>
-    </div>
-
-    <div class="card section" id="card-password">
-      <div class="section-head">
-        <h2 class="section-title">账户登录密码 <span class="badge badge-muted" id="pwd-badge">状态未知</span></h2>
-        <p class="section-desc" style="margin:0;">校园网账户登录密码仅保存于本机 password.txt，保存后立即生效，无需重启。</p>
-      </div>
-      <div class="field">
-        <label for="pwd-new">账户登录密码</label>
-        <input type="password" id="pwd-new" autocomplete="new-password">
-        <div class="hint">至少 1 个字符</div>
-      </div>
-      <div class="field">
-        <label for="pwd-confirm">再次输入账户登录密码</label>
-        <input type="password" id="pwd-confirm" autocomplete="new-password">
-        <div class="err" id="err-pwd" role="alert"></div>
-      </div>
-      <button class="btn btn-secondary" id="btn-save-pwd" type="button">🔑 保存账户登录密码</button>
     </div>
 
     <div class="save-bar">
