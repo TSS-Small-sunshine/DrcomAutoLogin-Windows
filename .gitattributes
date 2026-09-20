@@ -1,0 +1,24 @@
+# ============================================================
+# 行尾规范化
+# 仓库内强制 CRLF：Windows 批处理/脚本/Inno 脚本必须是 CRLF，
+# 否则用户下载 Source ZIP 后直接运行 .bat 会在 goto/for 等结构上出错。
+# ============================================================
+*.bat   text eol=crlf
+*.cmd   text eol=crlf
+*.ps1   text eol=crlf
+*.iss   text eol=crlf
+
+# Python / 文档 / 配置用 LF
+*.py    text eol=lf
+*.md    text eol=lf
+*.json  text eol=lf
+*.txt   text eol=lf
+.gitattributes text eol=lf
+.gitignore     text eol=lf
+
+# 显式声明为二进制，避免任何文本处理
+*.exe   binary
+*.apk   binary
+*.p12   binary
+*.jks   binary
+*.keystore binary
