@@ -108,7 +108,7 @@ jobs:
           path: packaging/output/*.exe
           if-no-files-found: error
 
-      - name: Publish Release (tag: installer)
+      - name: Publish Release (tag installer)
         shell: pwsh
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
