@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-联网_service.py — Dr.COM 校园网自动登录（Web UI 配置版 v1.3.1）
+联网_service.py — Dr.COM 校园网自动登录（Web UI 配置版 v1.3.2）
 
 架构
     主线程：阻塞在 ThreadingHTTPServer 上，提供 Web UI 与 REST API。
@@ -48,7 +48,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 # ============================================================
 # 常量
 # ============================================================
-VERSION = "1.3.1"
+VERSION = "1.3.2"
 BACKOFF_LEVELS = [5, 10, 20, 40, 60]  # 分钟，索引 = 连续失败次数，封顶 60
 
 DEFAULT_CONFIG = {
@@ -1002,7 +1002,12 @@ def _nssm_stop_service(timeout_sec=30):
 
 
 def _launch_installer(installer_path):
-    """用 Inno Setup 静默参数启动 installer，返回 Popen 对象或抛异常。"""
+    """用 Inno Setup 静默参数启动 installer，返回 Popen 对象或抛异常。
+
+    关键：用 DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP | CREATE_BREAKAWAY_FROM_JOB 让
+    子进程完全脱离父 Python 服务的进程生命周期。这样 Python 服务被 NSSM 杀掉时，
+    installer 不会被连累，能继续完成安装（停止旧服务 → 复制文件 → PostInstall 启动新服务）。
+    """
     args = [
         installer_path,
         "/SP-",
@@ -1010,7 +1015,12 @@ def _launch_installer(installer_path):
         "/CLOSEAPPLICATIONS",
         "/TASKS=startservice",
     ]
-    return subprocess.Popen(args, close_fds=True)
+    # Windows 进程创建标志（详见 MSDN CreateProcess dwCreationFlags）
+    DETACHED_PROCESS          = 0x00000008  # 子进程无控制台、不继承父 console
+    CREATE_NEW_PROCESS_GROUP   = 0x00000200  # 子进程属于新 process group，不响应父 Ctrl+C/Ctrl+Break
+    CREATE_BREAKAWAY_FROM_JOB  = 0x01000000  # 子进程脱离父进程的 Job Object（NSSM/服务宿主常用 Job）
+    flags = DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP | CREATE_BREAKAWAY_FROM_JOB
+    return subprocess.Popen(args, close_fds=True, creationflags=flags)
 
 
 # ============================================================
@@ -1121,20 +1131,21 @@ def _do_update_now():
         _set_update_state(update_backup=backup)
         _log_upgrade("INFO", "备份到 {}".format(backup))
 
-        # —— 7. 设 AppExit 为 Disabled（防止 NSSM 立即重启我们）——
+        # —— 7. 保存 AppExit 原值（升级透明，不修改）——
+        # 之前尝试设 "Disabled" 但 NSSM 合法值是 Default/Exit/Success/Failure/Codes，
+        # 写 "Disabled" 会让 nssm 服务无法启动（OpenService 0x424）。
+        # 现在采用透明策略：原值存到 STATE，仅在 _post_upgrade_startup 做幂等恢复，
+        # 升级期间不动注册表，避免污染用户 NSSM 配置。
         prev_appexit = _read_nssm_appexit()
         _set_update_state(update_prev_appexit=prev_appexit)
-        # 先记录原值到 STATE（恢复用），然后改 Disabled
-        if not _set_nssm_appexit("Disabled"):
-            _log_upgrade("WARN", "无法设 AppExit=Disabled，继续升级流程（installer 会接管）")
-        else:
-            _log_upgrade("INFO", "AppExit 已设为 Disabled（原值：{}）".format(prev_appexit))
+        _log_upgrade("INFO", "升级透明：AppExit 保持原值 {}（不修改注册表）".format(prev_appexit))
 
-        # —— 8. 启动 installer（不 wait，独立进程）——
+        # —— 8. 启动 installer（DETACHED_PROCESS 完全脱离父 Python；不 wait）——
         try:
             proc = _launch_installer(installer_path)
-            _log_upgrade("INFO", "installer 已启动 PID={}".format(proc.pid))
+            _log_upgrade("INFO", "installer 已启动 PID={}（DETACHED_PROCESS）".format(proc.pid))
         except OSError as exc:
+            # 启动失败：不让 Python 退出，保持服务运行 + Web UI 显示 error
             msg = "启动 installer 失败：{}".format(exc)
             _set_update_state(update_state="error", update_progress=0, update_progress_message=msg)
             _log_upgrade("ERROR", msg)
@@ -1147,13 +1158,13 @@ def _do_update_now():
             update_progress_message="正在升级到 {}（约 60 秒）...".format(remote_ver),
         )
 
-        # —— 10. 显式 nssm stop（让 installer 接管后续动作；NSSM 父进程会 SIGKILL 我们）——
-        # 这一步之后进程大概率会被杀掉，下面的代码不一定会执行到。
-        _nssm_stop_service(timeout_sec=15)
-
-        # —— 11. 如果进程没被 NSSM 杀掉（异常路径），fallback 写日志 ——
-        _log_upgrade("WARN", "显式 nssm stop 后进程仍存活，等待 NSSM 自动接管")
-        return {"ok": True, "stage": "upgrading", "version": remote_ver}
+        # —— 10. 立即退出 Python 进程（installer 独立接管后续安装）——
+        # 关键：installer 已用 DETACHED_PROCESS 脱离父进程 + Python 用 os._exit(0) 立即
+        # 终止，不调 _nssm_stop_service（之前那种调用会触发 NSSM 把我们和 installer 连带杀掉）。
+        # installer 自身在 ssInstall 阶段会调 nssm stop（idempotent）→ 复制文件 → 
+        # PostInstall 启动新服务。
+        _log_upgrade("INFO", "升级触发完成，Python 进程立即退出（installer 独立运行）")
+        os._exit(0)
 
     finally:
         # 若走到这里说明流程在 installer 启动前失败 / 或 stop 没杀掉我们
