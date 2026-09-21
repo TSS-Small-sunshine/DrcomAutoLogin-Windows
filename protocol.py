@@ -59,7 +59,6 @@ def _attach(*,
             backoff,
             backoff_lock,
             run_lock,
-            pwd_value,
             pwd_lock,
             load_password_from_disk,
             get_password,
@@ -86,7 +85,6 @@ def _attach(*,
     _BACKOFF = backoff
     _BACKOFF_LOCK = backoff_lock
     _RUN_LOCK = run_lock
-    _PWD_VALUE = pwd_value
     _PWD_LOCK = pwd_lock
     _load_password_from_disk = load_password_from_disk
     _get_password = get_password

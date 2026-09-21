@@ -44,7 +44,7 @@ CONFIG_IMPORT_MAX_BYTES = 4 * 1024 * 1024  # 4MB 安全上限
 # ============================================================
 def _attach(*, logger, run_lock, base_dir, log_file, log_dir,
             # 字典（直接挂到本模块 globals，API 代码用原名访问）
-            state, state_lock, pwd_value, pwd_lock,
+            state, state_lock, pwd_lock,
             config_file, password_file, upgrade_log_file,
             default_config,
             allowed_suffixes, allowed_intervals, allowed_update_intervals,
@@ -71,7 +71,6 @@ def _attach(*, logger, run_lock, base_dir, log_file, log_dir,
     g["STATE_LOCK"] = state_lock
     g["BACKOFF"] = state.get  # 占位，web_api 不直接读 BACKOFF
     g["RUN_LOCK"] = run_lock
-    g["_PWD_VALUE"] = pwd_value
     g["PWD_LOCK"] = pwd_lock
     # 路径常量
     g["BASE_DIR"] = base_dir
@@ -163,7 +162,7 @@ def api_get_config():
     cfg = _load_config()
     cfg = {k: cfg[k] for k in DEFAULT_CONFIG if k in cfg}
     with PWD_LOCK:
-        pwd_set = _PWD_VALUE is not None
+        pwd_set = _get_password() is not None
     return {
         **cfg,
         "password_status": "set" if pwd_set else "missing",
