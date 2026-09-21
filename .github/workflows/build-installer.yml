@@ -120,12 +120,12 @@ jobs:
                 $v = $match.Matches[0].Groups[1].Value
                 Write-Host "Read VERSION from version.py: $v"
               } else {
-                Write-Host "::warning::VERSION not found in version.py, fallback to 2.0.1"
-                $v = "2.0.1"
+                Write-Host "::error::VERSION not found in version.py"
+                exit 1
               }
             } else {
-              Write-Host "::warning::version.py not found, fallback to 2.0.1"
-              $v = "2.0.1"
+              Write-Host "::error::version.py not found"
+              exit 1
             }
           }
           "APP_VERSION=$v" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
