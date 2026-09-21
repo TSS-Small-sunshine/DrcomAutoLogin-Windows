@@ -399,10 +399,18 @@ import auto_update as _auto_update_mod
 # 后台线程
 # ============================================================
 def _startup_trigger():
-    """启动后稍等几秒再跑首次检查（让 Web server 先就绪 + 网络稳定）。"""
+    """启动后稍等几秒再跑首次检查（让 Web server 先就绪 + 网络稳定）。
+
+    v2.0.2：包一层 try/except，避免 run_once 抛异常时 daemon 线程静默死亡
+    （之前的写法如果 _load_config 或 run_once 出错，整个启动触发就废了，
+    只能靠 run_periodic 的 30min interval 救场 —— 用户感知为「自启动不触发」）。
+    """
     if STOP_EVENT.wait(3):
         return
-    run_once("startup")
+    try:
+        run_once("startup")
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("startup trigger 未捕获异常: %s", exc)
 
 
 def run_periodic():
@@ -418,15 +426,25 @@ def run_periodic():
 
         interval_sec = cfg["auto_check_interval_min"] * 60
 
-        # 计算 wait_sec：取 interval 与剩余退避时间的较大者
+        # 计算 wait_sec：取 interval 与剩余退避时间的较小者。
+        # 历史 bug（v2.0.2 修复）：原代码写 max(interval, delta)，导致
+        #   - 开机早期网络未稳 → _startup_trigger 触发 run_once → wait_network 失败 → 5min 退避
+        #   - run_periodic 第一次循环读 BACKOFF.until 后仍按 max 算出 30min interval
+        #   - 用户感知：自启动后 30+ 分钟内没有任何登录尝试
+        # 正确语义：退避已到期（delta<=0）→ 立即重试；否则取 min(interval, delta) 让退避生效
         bu = _backoff_until()
         wait_sec = interval_sec
         if bu:
             try:
                 bu_dt = datetime.fromisoformat(bu)
                 delta = (bu_dt - datetime.now()).total_seconds()
-                if delta > 0:
-                    wait_sec = max(interval_sec, delta)
+                if delta <= 0:
+                    # 退避到期：立即触发一次 run_once（不等 interval）
+                    wait_sec = 0
+                elif delta < interval_sec:
+                    # 退避 < interval：服从退避（按 delta 比 interval 大 → max 写法的旧 bug）
+                    wait_sec = delta
+                # else: delta >= interval → 保持 interval（合理：周期性不能比 interval 还短）
             except ValueError:
                 pass
 
