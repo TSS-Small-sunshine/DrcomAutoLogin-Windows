@@ -5,6 +5,20 @@
 格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，
 本项目遵循 [语义化版本](https://semver.org/lang/zh-CN/) 规范。
 
+## v2.0.2.2 (hotfix) — 2026-09-21
+- fix(web_api): `_schedule_success_clear` 裸名调用在解耦后 NameError，改为 `_auto_update_mod._schedule_success_clear()`
+- web_api.py `_attach()` docstring 注释"占位"改为正确的"跨模块调用走 _auto_update_mod"约定
+- packaging/version.py/setup.iss/联网_service.py docstring: 2.0.2.1 → 2.0.2.2
+
+## v2.0.2.1 (hotfix — 装包 + 启动修) — 2026-09-21
+
+- `fix(installer)`: v2.0.2 装包缺 5 个解耦模块 (`version.py` / `protocol.py` / `eula.py` / `web_api.py` / `auto_update.py`), 启动崩 `ModuleNotFoundError: No module named 'version'`。在 `packaging/setup.iss` [Files] 段加 5 行 `Source: "..\xxx.py"`, `version.py` VERSION 2.0.1 → 2.0.2.1。
+- `fix(ci)`: `.github/workflows/build-installer.yml` 之前硬编码 `APP_VERSION="2.0.1"`, 改为从 `version.py` 读取 (`-c "import version; print(version.VERSION)"`)。
+- `fix(startup)`: embeddable Python 默认 `sys.path[0]` 是 stdlib zip (`python312.zip`) 而不是脚本目录, 联网_service.py 头部加 `sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))` 3 行兜底, 跨部署环境都生效。
+- 自启动不触发登录的退避算法 bug: `run_periodic` 计算 `wait_sec = max(interval_sec, delta)` 是反模式 (interval 永远 > backoff), 改为 `wait_sec = min(interval_sec, delta)`。`_startup_trigger` 强制退避 0, 开机早期网络未稳时**不**该有退避历史。
+- 释出: 装包资产覆盖到 v2.0.2 release (exe 文件名 `StardustFlashLink-Setup-v2.0.2.1.exe`), git tag 仍 v2.0.2。
+- 4 commits 领先 main (cf235a2 + 301e37e + 3b29087 + de0d0d7)。
+
 ## v2.0.2 (字面量升级) — 2026-09-21
 
 - `version.py`: VERSION "2.0.1" → "2.0.2"
@@ -17,20 +31,6 @@
 - 18 处字面量升级, 0 临时文件 / 0 `git add .` 误带
 
 注: v2.0.2 release 资产后续被替换为 v2.0.2.1.exe (hotfix/v2.0.2.1 commit), git tag v2.0.2 保留指向 e0354df。
-
-## v2.0.2.1 (hotfix — 装包 + 启动修) — 2026-09-21
-
-- `fix(installer)`: v2.0.2 装包缺 5 个解耦模块 (`version.py` / `protocol.py` / `eula.py` / `web_api.py` / `auto_update.py`), 启动崩 `ModuleNotFoundError: No module named 'version'`。在 `packaging/setup.iss` [Files] 段加 5 行 `Source: "..\xxx.py"`, `version.py` VERSION 2.0.1 → 2.0.2.1。
-- `fix(ci)`: `.github/workflows/build-installer.yml` 之前硬编码 `APP_VERSION="2.0.1"`, 改为从 `version.py` 读取 (`-c "import version; print(version.VERSION)"`)。
-- `fix(startup)`: embeddable Python 默认 `sys.path[0]` 是 stdlib zip (`python312.zip`) 而不是脚本目录, 联网_service.py 头部加 `sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))` 3 行兜底, 跨部署环境都生效。
-- 自启动不触发登录的退避算法 bug: `run_periodic` 计算 `wait_sec = max(interval_sec, delta)` 是反模式 (interval 永远 > backoff), 改为 `wait_sec = min(interval_sec, delta)`。`_startup_trigger` 强制退避 0, 开机早期网络未稳时**不**该有退避历史。
-- 释出: 装包资产覆盖到 v2.0.2 release (exe 文件名 `StardustFlashLink-Setup-v2.0.2.1.exe`), git tag 仍 v2.0.2。
-- 4 commits 领先 main (cf235a2 + 301e37e + 3b29087 + de0d0d7)。
-
-## v2.0.2.2 (hotfix) — 2026-09-21
-- fix(web_api): `_schedule_success_clear` 裸名调用在解耦后 NameError，改为 `_auto_update_mod._schedule_success_clear()`
-- web_api.py `_attach()` docstring 注释"占位"改为正确的"跨模块调用走 _auto_update_mod"约定
-- packaging/version.py/setup.iss/联网_service.py docstring: 2.0.2.1 → 2.0.2.2
 
 ---
 
