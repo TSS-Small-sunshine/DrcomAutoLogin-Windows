@@ -112,7 +112,21 @@ jobs:
           if ("${{ github.ref_type }}" -eq "tag") {
             $v = "${{ github.ref_name }}" -replace '^v',''
           } else {
-            $v = "2.0.1"
+            # 从 version.py 读 VERSION（避免硬编码）
+            $versionFile = "version.py"
+            if (Test-Path $versionFile) {
+              $match = Select-String -Path $versionFile -Pattern '^VERSION\s*=\s*["'']([^"'']+)["'']' | Select-Object -First 1
+              if ($match) {
+                $v = $match.Matches[0].Groups[1].Value
+                Write-Host "Read VERSION from version.py: $v"
+              } else {
+                Write-Host "::warning::VERSION not found in version.py, fallback to 2.0.1"
+                $v = "2.0.1"
+              }
+            } else {
+              Write-Host "::warning::version.py not found, fallback to 2.0.1"
+              $v = "2.0.1"
+            }
           }
           "APP_VERSION=$v" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
           Write-Host "APP_VERSION = $v"
