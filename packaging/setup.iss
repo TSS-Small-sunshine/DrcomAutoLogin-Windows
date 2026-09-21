@@ -220,8 +220,8 @@ begin
   Exec(NSSM, 'set DrcomAutoLogin AppStderr "' + AppDir + '\logs\service_stderr.log"', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
   Exec(NSSM, 'set DrcomAutoLogin AppRotateFiles 1', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
   Exec(NSSM, 'set DrcomAutoLogin AppRotateBytes 1048576', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
-  Exec(NSSM, 'set DrcomAutoLogin AppExit Default Restart', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
-  Exec(NSSM, 'set DrcomAutoLogin AppExit 0 Restart', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+  Exec(NSSM, 'set DrcomAutoLogin AppExit Default Ignore', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+  Exec(NSSM, 'set DrcomAutoLogin AppExit 0 Ignore', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
 
   // 启动（仅当用户在 wizard 勾选）
   if IsTaskSelected('startservice') then
