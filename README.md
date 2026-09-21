@@ -91,7 +91,7 @@
 
 ## 🏷 项目状态
 
-**当前版本**：v2.0.1（2026-09-20） · **状态**：🟢 积极维护
+**当前版本**：v2.0.2（2026-09-21） · **状态**：🟢 积极维护
 
 [最新 Release](https://github.com/TSS-Small-sunshine/StardustFlashLink/releases/latest) ·
 [更新日志](https://github.com/TSS-Small-sunshine/StardustFlashLink/releases) ·
@@ -280,7 +280,7 @@ DrcomAutoLogin-Windows/
 
 1. 安装 **Inno Setup 6**（`build.bat` 会检测，缺失时可自动下载安装）
 2. 双击运行 `packaging\build.bat`（会自动准备 NSSM 并调用 `ISCC.exe` 编译）
-3. 构建产物：`packaging\output\StardustFlashLink-Setup-v2.0.1.exe`
+3. 构建产物：`packaging\output\StardustFlashLink-Setup-v2.0.2.exe`
 4. 把该 `.exe` 分发出去，双击即按向导安装（可勾选「创建桌面快捷方式」「安装后立即启动服务」）
 
 ---

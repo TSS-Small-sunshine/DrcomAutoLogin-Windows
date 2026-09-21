@@ -5,6 +5,19 @@
 格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，
 本项目遵循 [语义化版本](https://semver.org/lang/zh-CN/) 规范。
 
+## [v2.0.2] - 2026-09-21
+
+解耦 + bug fix：瘦身 + 修自启动不触发登录的根因。
+
+### ✨ 内部
+- **解耦**：`联网_service.py` (4034 行) 拆成 5 个模块（`version.py` / `protocol.py` / `eula.py` / `web_api.py` / `auto_update.py`），主入口瘦身到 620 行 (-85%)。5 个模块通过 `_attach()` 注入共享状态 (STATE / LOCK / BASE_DIR / HTML_PAGE)
+
+### 🐛 修复
+- **自启动不触发登录的根因**：`run_periodic` 的 `wait_sec = max(interval_sec, delta)` 退避永远被 interval 压制，改为 `min(interval, delta)` 三段逻辑（delta≤0 → 0; delta<interval → delta; delta≥interval → interval）
+- `_startup_trigger` 加 try/except + logger.exception（避免 daemon 线程异常静默死亡）
+
+---
+
 ## [v2.0.0] - 2026-09-20
 
 进入 2.0 时代。

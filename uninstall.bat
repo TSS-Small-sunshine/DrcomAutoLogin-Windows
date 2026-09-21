@@ -3,7 +3,7 @@ chcp 65001 >nul
 setlocal EnableDelayedExpansion
 
 REM ============================================================
-REM   uninstall.bat - 移除 星尘闪连 (Stardust Flash Link) 服务 (v2.0.1)
+REM   uninstall.bat - 移除 星尘闪连 (Stardust Flash Link) 服务 (v2.0.2)
 REM   修复: UTF-8 BOM + chcp 65001（修复 cmd 中文编码问题）
 REM ============================================================
 
@@ -28,7 +28,7 @@ set "LOG_DIR=!SCRIPT_DIR!\logs"
 
 echo.
 echo ============================================================
-echo   星尘闪连 (Stardust Flash Link) 服务 - 卸载 (v2.0.1)
+echo   星尘闪连 (Stardust Flash Link) 服务 - 卸载 (v2.0.2)
 echo ============================================================
 echo   脚本目录: !SCRIPT_DIR!
 echo ============================================================
