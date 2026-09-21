@@ -23,7 +23,6 @@ import re
 import threading
 import urllib.error
 import urllib.parse
-import urllib.request
 import zipfile
 from datetime import datetime
 from http.server import BaseHTTPRequestHandler
