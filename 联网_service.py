@@ -48,7 +48,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 # ============================================================
 # 常量
 # ============================================================
-VERSION = "2.0.1"
+from version import VERSION  # noqa: E402  保持原行号兼容：VERSION 原本在 line 51
 BACKOFF_LEVELS = [5, 10, 20, 40, 60]  # 分钟，索引 = 连续失败次数，封顶 60
 
 DEFAULT_CONFIG = {
