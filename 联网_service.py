@@ -424,6 +424,14 @@ import protocol as _protocol_mod
 
 # _attach 在 main() 里完成（STOP_EVENT 必须在 _attach 之前已存在）。
 
+# ============================================================
+# EULA / CHANGELOG IO 已迁移到 eula.py（v2.0.2 解耦）
+# ============================================================
+from eula import api_get_changelog as _eula_api_get_changelog
+import eula as _eula_mod
+
+# _eula_mod._attach() 在 main() 里调用（需要 BASE_DIR）。
+
 
 # ============================================================
 # 后台线程
@@ -1351,26 +1359,12 @@ def api_get_about():
 
 
 def api_get_changelog():
-    """GET /api/changelog — 返回仓库根目录 CHANGELOG.md 内容（UTF-8 文本）。
-
-    路径说明：CHANGELOG.md 与 联网_service.py 同在仓库根目录（即 BASE_DIR）。
-    安装场景下 Inno Setup 把 CHANGELOG.md 复制到 {app}（与 联网_service.py 同级），
-    所以生产环境也是 BASE_DIR/CHANGELOG.md，与开发环境一致。
+    """CHANGELOG IO 已迁移到 eula.py（v2.0.2 解耦）。
+    
+    此函数由 _Handler.do_GET 调用，保留为薄壳以减少 do_GET 路由改动。
+    commit 4 抽出 web_api.py 时将整体迁移。
     """
-    # CHANGELOG.md 路径（与 BASE_DIR 同级）
-    cl_path = os.path.join(BASE_DIR, "CHANGELOG.md")
-    cl_path = os.path.normpath(cl_path)
-    try:
-        with open(cl_path, "r", encoding="utf-8") as f:
-            content = f.read()
-    except OSError as exc:
-        # 缺失 / 权限 / 编码等任何 OS 级错误都走这里，统一返回 500
-        return 500, {"error": "read changelog failed: {}".format(exc), "content": ""}
-    return 200, {
-        "content": content,
-        "size": len(content),
-        "version": VERSION,
-    }
+    return _eula_mod.api_get_changelog()
 
 
 def api_post_restart(handler):
@@ -3777,6 +3771,8 @@ def main():
         now_iso=_now_iso,
         stop_event=STOP_EVENT,
     )
+    # 4.6 把 BASE_DIR 注入 eula 模块（CHANGELOG / EULA IO 需要）
+    _eula_mod._attach(base_dir=BASE_DIR)
 
     # 5. 启动后台线程
     startup_thread = threading.Thread(target=_startup_trigger, name="startup-trigger", daemon=True)
