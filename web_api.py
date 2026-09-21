@@ -99,7 +99,7 @@ def _attach(*, logger, run_lock, base_dir, log_file, log_dir,
     if eula_api_get_changelog is None:
         from eula import api_get_changelog as eula_api_get_changelog  # noqa: E402
     g["api_get_changelog"] = eula_api_get_changelog
-    # auto_update 模块（commit 5 之后才注入；这里只是占位）
+    # auto_update 模块（v2.0.2 解耦后注入到 _auto_update_mod; 调用其函数请用 _auto_update_mod._func_name()）
     g["_auto_update_mod"] = auto_update_mod
 
 
@@ -329,7 +329,7 @@ def api_post_restart(handler):
 # ============================================================
 def api_get_update_status():
     """GET /api/update/status — 当前升级状态快照。"""
-    _schedule_success_clear()  # 顺手清理过期绿 banner
+    _auto_update_mod._schedule_success_clear()  # 顺手清理过期绿 banner（v2.0.2.3.2 fix: 解耦后跨模块调用走 _auto_update_mod 注入）
     cfg = _load_config()
     snap = _snapshot_state()
     return {

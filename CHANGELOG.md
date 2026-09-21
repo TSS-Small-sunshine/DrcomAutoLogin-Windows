@@ -5,6 +5,13 @@
 格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，
 本项目遵循 [语义化版本](https://semver.org/lang/zh-CN/) 规范。
 
+## v2.0.2.2 (hotfix) — 2026-09-21
+- fix(web_api): `_schedule_success_clear` 裸名调用在解耦后 NameError，改为 `_auto_update_mod._schedule_success_clear()`
+- web_api.py `_attach()` docstring 注释"占位"改为正确的"跨模块调用走 _auto_update_mod"约定
+- packaging/version.py/setup.iss/联网_service.py docstring: 2.0.2.1 → 2.0.2.2
+
+---
+
 ## [v2.0.0] - 2026-09-20
 
 进入 2.0 时代。
