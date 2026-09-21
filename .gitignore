@@ -2,6 +2,9 @@
 password.txt
 config.json
 
+# ---- 临时诊断脚本（v2.0.2 启动崩溃 dry-run 产物，已在 hotfix/v2.0.2.2 删除）----
+_debug/
+
 # ---- 运行时数据 ----
 logs/
 
