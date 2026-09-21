@@ -5,6 +5,16 @@
 格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，
 本项目遵循 [语义化版本](https://semver.org/lang/zh-CN/) 规范。
 
+## v2.0.2.3 (hotfix) — 2026-09-21
+
+- chore: 删除 `_debug/` 6 个临时诊断脚本 + 加 `.gitignore` (`f632fc3`)
+- fix(password): 移除 `pwd_value=` 注入, 改用 `get_password()` 函数; 同步清理 `web_api.py` line 166 死代码 + `protocol.py` `_attach` 签名 (`3021ad5`)
+- fix(installer): `AppExit Default Restart` → `Default Ignore`, 端口冲突时 NSSM 不死循环重启 (`a77ea46`)
+- fix(ci): `version.py` 缺 VERSION 时 `::error` + `exit 1`, 不再静默 fallback 2.0.1 (`b908e6c`)
+- 版本号字面量 bump: `2.0.2.2` → `2.0.2.3` (4 处: `version.py`, `setup.iss` MyAppVersion, `setup.iss` NSSM Description, `联网_service.py` docstring)
+
+4 个 P0 commit 已在 `hotfix/v2.0.2.2` 上, 此 commit 仅 bump 字面量 + CHANGELOG。
+
 ## v2.0.2.2 (hotfix) — 2026-09-21
 - fix(web_api): `_schedule_success_clear` 裸名调用在解耦后 NameError，改为 `_auto_update_mod._schedule_success_clear()`
 - web_api.py `_attach()` docstring 注释"占位"改为正确的"跨模块调用走 _auto_update_mod"约定
