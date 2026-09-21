@@ -411,247 +411,18 @@ def _backoff_until():
 
 
 # ============================================================
-# 网络操作（与上版一致 + 接受 cfg 参数）
+# 网络操作 / run_once 已迁移到 protocol.py（v2.0.2 解耦）
 # ============================================================
-def wait_network(host, port, timeout):
-    """每 2s 探测 host:port，最多 timeout 秒。返回 bool。"""
-    logger.info("等待网络 %s:%s 可用（最长 %ss）...", host, port, timeout)
-    deadline = time.time() + timeout
-    attempt = 0
-    while time.time() < deadline:
-        attempt += 1
-        try:
-            with socket.create_connection((host, port), timeout=3):
-                logger.info("网络已可达（第 %s 次尝试）", attempt)
-                return True
-        except OSError as exc:
-            logger.info("等待中 (%s): %s", attempt, exc)
-            # 此处 sleep 用在 retry 循环，不是长循环
-            time.sleep(2)
-    logger.error("等待 %ss 后 %s:%s 仍不可达", timeout, host, port)
-    return False
+from protocol import (
+    wait_network,
+    discover_network,
+    is_online,
+    login,
+    run_once,
+)
+import protocol as _protocol_mod
 
-
-def discover_network(host):
-    """获取本机在校园网段的 IP 和 MAC，用于登录表单。
-
-    策略：
-      1. 优先从 chkstatus 响应里拿 v4ip / olmac（最准，跟登录账号绑定）；
-      2. fallback 用 UDP socket connect 拿本机 IP；
-      3. MAC 拿不到就空字符串（Dr.COM 网关允许 MAC 占位）。
-
-    返回 (ip, mac) 元组；任意拿不到就空字符串。
-    """
-    ip = ""
-    mac = ""
-    try:
-        url = "http://{}/drcom/chkstatus?callback=cb&jsVersion=4.X".format(host)
-        req = urllib.request.Request(
-            url,
-            headers={"User-Agent": "Mozilla/5.0", "Accept": "*/*"},
-        )
-        with urllib.request.urlopen(req, timeout=5) as resp:
-            txt = resp.read().decode("utf-8", errors="replace")
-        m = re.search(r'"v4ip"\s*:\s*"([^"]*)"', txt)
-        if m:
-            ip = m.group(1)
-        m2 = re.search(r'"olmac"\s*:\s*"([^"]*)"', txt, re.I)
-        if m2:
-            mac = m2.group(1).upper().replace(":", "").replace("-", "")
-    except (urllib.error.URLError, OSError, TimeoutError, ValueError):
-        pass
-    # fallback：UDP connect 拿本机 IP
-    if not ip:
-        try:
-            sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-            try:
-                sock.connect((host, 80))
-                ip = sock.getsockname()[0]
-            finally:
-                sock.close()
-        except OSError:
-            pass
-    return ip, mac
-
-
-def is_online(host):
-    """通过 chkstatus JSONP 查询在线状态（端口 80）。
-
-    请求：GET http://host/drcom/chkstatus?callback=cb&jsVersion=4.X
-    响应：cb({"result":1,"uid":"...","AC":"...","oltime":N,...})
-
-    返回：
-        True   已在线（result == 1）
-        False  未在线（result == 0）
-        None   网络异常 / 解析失败
-    """
-    url = "http://{}/drcom/chkstatus?callback=cb&jsVersion=4.X".format(host)
-    try:
-        req = urllib.request.Request(
-            url,
-            headers={"User-Agent": "Mozilla/5.0", "Accept": "*/*"},
-        )
-        with urllib.request.urlopen(req, timeout=8) as resp:
-            txt = resp.read().decode("utf-8", errors="replace")
-    except (urllib.error.URLError, OSError, TimeoutError) as exc:
-        logger.debug("在线检查网络异常: %s", exc)
-        return None
-    m = re.search(r"\((\{.*?\})\s*\)", txt, re.S)
-    if not m:
-        logger.debug("在线检查响应非 JSONP: %r", txt[:120])
-        return None
-    try:
-        data = json.loads(m.group(1))
-    except (ValueError, json.JSONDecodeError):
-        logger.debug("在线检查 JSON 解析失败: %r", txt[:120])
-        return None
-    result = data.get("result")
-    if result == 1:
-        return True
-    if result == 0:
-        return False
-    return None
-
-
-def login(host, account, suffix, password, wlan_user_ip, wlan_user_mac):
-    """Dr.COM JSONP 登录（GET /eportal/portal/login，端口 801）。
-
-    请求：GET http://host:801/eportal/portal/login?callback=dr1234&...
-    响应：dr1234({"result":1,"msg":"...","ret_code":0})
-
-    返回 (success, msg)：
-        success  True=成功（result == 1）/ False=失败
-        msg      服务端 msg 字段或本地诊断信息（用于日志）
-    """
-    callback = "dr{}".format(random.randint(1000, 9999))
-    params = {
-        "callback":       callback,
-        "login_method":   "1",
-        "user_account":   "{}{}".format(account, suffix),
-        "user_password":  password,
-        "wlan_user_ip":   wlan_user_ip or "",
-        "wlan_user_ipv6": "",
-        "wlan_user_mac":  wlan_user_mac or "",
-        "wlan_ac_ip":     "",
-        "wlan_ac_name":   "",
-        "terminal_type":  "1",
-        "jsVersion":      "4.1.3",
-        "lang":           "zh-cn",
-        "v":              str(random.randint(1000, 9999)),
-    }
-    url = "http://{}:801/eportal/portal/login?{}".format(host, urllib.parse.urlencode(params))
-    try:
-        req = urllib.request.Request(
-            url,
-            headers={"User-Agent": "Mozilla/5.0", "Accept": "*/*"},
-        )
-        with urllib.request.urlopen(req, timeout=12) as resp:
-            txt = resp.read().decode("utf-8", errors="replace")
-    except (urllib.error.URLError, OSError, TimeoutError) as exc:
-        logger.error("登录请求异常: %s", exc)
-        return False, "请求失败: {}".format(exc)
-    # 解析 JSONP：dr1234({...});
-    m = re.search(r"\((\{.*?\})\s*\)\s*;?\s*$", txt, re.S)
-    if not m:
-        return False, "login 接口返回非 JSONP: {}".format(txt[:80])
-    try:
-        data = json.loads(m.group(1))
-    except (ValueError, json.JSONDecodeError):
-        return False, "login JSON 解析失败: {}".format(txt[:80])
-    success = data.get("result") == 1
-    msg = data.get("msg", "") or ""
-    return success, msg
-
-
-# ============================================================
-# run_once — 一次完整检查
-# ============================================================
-def run_once(reason):
-    """串行执行一次：等网络 → 查在线 → 登录。reason: startup / periodic / manual。"""
-    with RUN_LOCK:
-        with STATE_LOCK:
-            if STATE["login_in_progress"]:
-                logger.info("已有检查在进行中，跳过本次 (reason=%s)", reason)
-                return
-            STATE["login_in_progress"] = True
-
-        cfg = None
-        try:
-            logger.info("=" * 40)
-            logger.info("开始检查 (reason=%s)", reason)
-            cfg = _load_config()
-            host = cfg["host"]
-            port = cfg["port"]
-            account = cfg["account"]
-            suffix = cfg["suffix"]
-            interval_min = cfg["auto_check_interval_min"]
-
-            # 更新当前账号显示
-            _set_state(current_account="{}{}".format(account, suffix))
-
-            # 1. 等网络
-            if not wait_network(host, port, cfg["network_wait_timeout_sec"]):
-                _set_state(network_reachable=False, online=None, last_error="校园网不可达")
-                _set_backoff()
-                return
-
-            _set_state(network_reachable=True)
-
-            # 2. 查在线
-            if is_online(host):
-                _set_state(online=True, last_error=None)
-                _reset_backoff()
-                logger.info("已在线，无需登录")
-                return
-
-            _set_state(online=False)
-
-            # 3. 登录
-            pwd = _get_password()
-            if pwd is None:
-                logger.warning("密码未设置，跳过登录。请通过 Web UI 设置密码。")
-                _set_state(last_error="密码未设置")
-                # 不计入退避（用户操作问题，不是网络问题）
-                return
-
-            wlan_ip, wlan_mac = discover_network(host)
-            ok, msg = login(host, account, suffix, pwd, wlan_ip, wlan_mac)
-            now_iso = _now_iso()
-            if ok:
-                logger.info("登录成功: %s", msg)
-                _set_state(
-                    online=True,
-                    last_login_at=now_iso,
-                    last_login_success=True,
-                    last_error=None,
-                )
-                _reset_backoff()
-            else:
-                logger.error("登录失败: %s", msg)
-                _set_state(
-                    last_login_success=False,
-                    last_error="登录失败: {}".format(msg) if msg else "登录失败（账号或密码错误或网络异常）",
-                )
-                _set_backoff()
-
-        except Exception as exc:  # noqa: BLE001 — 兜底写日志
-            logger.exception("run_once 未捕获异常: %s", exc)
-            _set_state(last_error="内部异常: {}".format(exc))
-            _set_backoff()
-        finally:
-            with STATE_LOCK:
-                STATE["login_in_progress"] = False
-                STATE["last_check_at"] = _now_iso()
-            # 更新 next_check_at：退避优先，否则按 interval
-            bu = _backoff_until()
-            with STATE_LOCK:
-                if bu:
-                    STATE["next_check_at"] = bu
-                else:
-                    next_min = (cfg or {}).get("auto_check_interval_min", 30)
-                    STATE["next_check_at"] = (
-                        datetime.now() + timedelta(minutes=next_min)
-                    ).isoformat(timespec="seconds")
+# _attach 在 main() 里完成（STOP_EVENT 必须在 _attach 之前已存在）。
 
 
 # ============================================================
@@ -3985,6 +3756,27 @@ def main():
         _post_upgrade_startup()
     except Exception as exc:  # noqa: BLE001
         logger.warning("启动钩子异常: %s", exc)
+
+    # 4.5 把共享状态注入 protocol 模块（必须在 run_once 被任何线程调用之前）
+    _protocol_mod._attach(
+        logger=logger,
+        state=STATE,
+        state_lock=STATE_LOCK,
+        backoff=BACKOFF,
+        backoff_lock=BACKOFF_LOCK,
+        run_lock=RUN_LOCK,
+        pwd_value=_PWD_VALUE,
+        pwd_lock=PWD_LOCK,
+        load_password_from_disk=_load_password_from_disk,
+        get_password=_get_password,
+        load_config=_load_config,
+        set_state=_set_state,
+        set_backoff=_set_backoff,
+        reset_backoff=_reset_backoff,
+        backoff_until=_backoff_until,
+        now_iso=_now_iso,
+        stop_event=STOP_EVENT,
+    )
 
     # 5. 启动后台线程
     startup_thread = threading.Thread(target=_startup_trigger, name="startup-trigger", daemon=True)
